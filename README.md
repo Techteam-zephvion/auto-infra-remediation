@@ -119,13 +119,19 @@ Then monitor your webhook console for the LangGraph execution trace.
 
 ---
 
-## 🔮 Roadmap (V2 Enhancements)
-The following enterprise-readiness features are slated for the next phase of development:
-
+## 🔮 Roadmap (V2 & V3 Enhancements)
+### V2: Enterprise Readiness (Current Focus)
 1. **Human-in-the-Loop (HITL) execution**: Utilizing LangGraph breakpoints to pause before `execution_node` to await approval via a Teams/Slack webhook.
 2. **State Persistence & Audit Logging**: Integrating `SqliteSaver` to the graph executor to create immutable legal audit trails of all AI decisions.
 3. **PromQL Context Injection**: Giving the Parser Node API access to query 15-minute historical Metric Data (CPU/RAM trends) rather than just flat string logs.
 4. **Strict Kubernetes RBAC**: Bootstrapping a dedicated `ServiceAccount` and `Role` for the Python API with extreme least-privilege scoping (e.g. explicitly denying access to `Secrets`).
+
+### V3: Advanced Auto-Remediation Vision
+1. **Self-Healing Codebase (Auto-PRs)**: Upgrading the AI from Operator to Engineer to patch actual source code bugs and open GitHub PRs autonomously.
+2. **RAG-Powered Corporate Memory**: Embedding internal Confluence runbooks and Jira post-mortems into a Vector DB so the AI solves problems based on historical company context.
+3. **Multi-Agent Specialist Swarm**: Routing specific alerts to specialized LangGraph sub-agents (e.g., DBA Agent, Network Agent) for deep-dive analysis.
+4. **Autonomous Auto-Rollback**: Implementing a Verification Node that monitors metrics for 3 minutes post-execution and instantly triggers a `kubectl rollout undo` if the fix causes cascading failures.
+5. **Continuous Chaos Engineering**: Integrating automated, randomized chaos testing to continuously validate and train the agentic pipeline.
 
 3. **Watch the Flow**:
 - Check the Prometheus UI (port-forward `prometheus-kube-prometheus-prometheus` svc to `9090`).

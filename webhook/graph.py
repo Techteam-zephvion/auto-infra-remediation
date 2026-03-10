@@ -121,11 +121,11 @@ def execute_remediation_node(state: GraphState) -> GraphState:
         print(msg)
         return {"execution_result": msg}
 
-def build_graph():
+def build_graph(memory_saver):
     workflow = StateGraph(GraphState)
     
     # Add nodes
-    workflow.add_node("parser", parse_and_fetch_logs)
+    workflow.add_node("parser", log_parser_node)
     workflow.add_node("solver", solver_node)
     workflow.add_node("validator", safety_validation_node)
     workflow.add_node("execution", execute_remediation_node)
@@ -137,4 +137,4 @@ def build_graph():
     workflow.add_edge("validator", "execution")
     workflow.add_edge("execution", END)
     
-    return workflow.compile()
+    return workflow.compile(checkpointer=memory_saver, interrupt_before=["execution"])

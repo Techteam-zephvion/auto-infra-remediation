@@ -16,6 +16,9 @@ def get_pod_logs(namespace: str, pod_name: str, tail_lines: int = 50) -> str:
     v1 = client.CoreV1Api()
     try:
         logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=tail_lines)
+        # API Optimization 3: Context Truncation (Max 2000 chars to save LLM tokens)
+        if logs and len(logs) > 2000:
+            logs = "..." + logs[-2000:]
         return logs
     except Exception as e:
         return f"Error fetching logs for {pod_name}: {str(e)}"

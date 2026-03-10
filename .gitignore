@@ -69,3 +69,4 @@ Thumbs.db
 *.swo
 auto-remediation-cluster-config
 *.ascii
+audit_logs.db*

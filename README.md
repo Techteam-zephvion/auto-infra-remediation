@@ -113,9 +113,19 @@ Open another terminal and trigger a bug in the Go microservice.
 ```bash
 # CPU Spike
 curl http://localhost:8080/spike-cpu
-# OR Memory Leak
-curl http://localhost:8080/leak-memory
 ```
+
+Then monitor your webhook console for the LangGraph execution trace.
+
+---
+
+## 🔮 Roadmap (V2 Enhancements)
+The following enterprise-readiness features are slated for the next phase of development:
+
+1. **Human-in-the-Loop (HITL) execution**: Utilizing LangGraph breakpoints to pause before `execution_node` to await approval via a Teams/Slack webhook.
+2. **State Persistence & Audit Logging**: Integrating `SqliteSaver` to the graph executor to create immutable legal audit trails of all AI decisions.
+3. **PromQL Context Injection**: Giving the Parser Node API access to query 15-minute historical Metric Data (CPU/RAM trends) rather than just flat string logs.
+4. **Strict Kubernetes RBAC**: Bootstrapping a dedicated `ServiceAccount` and `Role` for the Python API with extreme least-privilege scoping (e.g. explicitly denying access to `Secrets`).
 
 3. **Watch the Flow**:
 - Check the Prometheus UI (port-forward `prometheus-kube-prometheus-prometheus` svc to `9090`).

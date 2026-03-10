@@ -1,0 +1,37 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: auto-remediation-alerts
+  namespace: default
+  labels:
+    release: prometheus
+spec:
+  groups:
+  - name: auto-remediation.rules
+    rules:
+    - alert: HighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{namespace="default", pod=~"auto-remediation-service-.*"}[1m]) > 0.4
+      for: 30s
+      labels:
+        severity: critical
+      annotations:
+        summary: "High CPU Usage on remediation service"
+        description: "CPU usage has exceeded 40% for more than 30s. Pod may be experiencing a spike."
+        
+    - alert: HighMemoryUsage
+      expr: container_memory_working_set_bytes{namespace="default", pod=~"auto-remediation-service-.*"} / 1024 / 1024 > 100
+      for: 30s
+      labels:
+        severity: critical
+      annotations:
+        summary: "High Memory Usage on remediation service"
+        description: "Memory usage has exceeded 100MB for more than 30s. Pod may be leaking memory."
+        
+    - alert: HighErrorRate
+      expr: rate(http_requests_total{status="500"}[1m]) > 0.1
+      for: 30s
+      labels:
+        severity: critical
+      annotations:
+        summary: "High 500 Error Rate"
+        description: "More than 0.1 errors per second occurring for /error-500 endpoint."

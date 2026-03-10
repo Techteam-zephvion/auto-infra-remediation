@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-remediation-service
+  namespace: default
+  labels:
+    app: auto-remediation-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auto-remediation-service
+  template:
+    metadata:
+      labels:
+        app: auto-remediation-service
+    spec:
+      containers:
+        - name: service
+          image: auto-remediation-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auto-remediation-service
+  namespace: default
+  labels:
+    app: auto-remediation-service
+spec:
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
+      protocol: TCP
+      name: http
+  selector:
+    app: auto-remediation-service
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: auto-remediation-monitor
+  namespace: default
+  labels:
+    # This label is critical to be picked up by the prometheus operator installed via kube-prometheus-stack
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: auto-remediation-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 10s

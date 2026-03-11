@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 
 from k8s_client import get_pod_logs, get_pods_with_labels, execute_remediation
+from prom_client import get_prometheus_metrics
 
 load_dotenv()
 
@@ -25,15 +26,16 @@ class SafetyValidation(BaseModel):
     reasoning: str = Field(description="Reasoning for approval or denial")
 
 # LangGraph State
-class GraphState(TypedDict):
+class GraphState(TypedDict, total=False):
     alert_payload: dict
     logs: str
+    metrics: str
     remediation_plan: RemediationPlan
     safety_validation: SafetyValidation
     execution_result: str
 
 # Node Functions
-def parse_and_fetch_logs(state: GraphState) -> GraphState:
+def log_parser_node(state: GraphState) -> GraphState:
     """Fetch context from Kubernetes based on the alert."""
     print("\n--- [NODE] Log Parser ---")
     alert = state.get("alert_payload", {})
@@ -44,17 +46,20 @@ def parse_and_fetch_logs(state: GraphState) -> GraphState:
         labels = {}
         
     namespace = labels.get("namespace", "default")
+    alertname = labels.get("alertname", "Unknown")
     
     logs = ""
+    metrics = "No metrics fetched."
     pods = get_pods_with_labels(namespace, "app=auto-remediation-service")
     if pods:
         pod_name = pods[0]
         logs = get_pod_logs(namespace, pod_name, tail_lines=100)
+        metrics = get_prometheus_metrics(alertname, pod_name)
     else:
         logs = "No pods found to fetch logs from."
         
-    print(f"Fetched {len(logs)} bytes of logs.")
-    return {"logs": logs}
+    print(f"Fetched {len(logs)} bytes of logs. Fetched PromQL metrics.")
+    return {"logs": logs, "metrics": metrics}
 
 def solver_node(state: GraphState) -> GraphState:
     """LLM Analyzes logs and suggests remediation."""
@@ -71,6 +76,9 @@ def solver_node(state: GraphState) -> GraphState:
     
     Here are the recent logs from the affected pod:
     {logs[:2000]}
+    
+    Here is the mathematical context from Prometheus metrics:
+    {state.get('metrics', 'No metrics available.')}
     
     Based on this, propose a safe remediation script (e.g. kubectl restart, config patch).
     Do NOT delete namespaces or entire deployments unless absolutely necessary.

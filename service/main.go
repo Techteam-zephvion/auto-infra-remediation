@@ -47,10 +47,10 @@ func main() {
 	// 1. CPU Spike
 	http.HandleFunc("/spike-cpu", func(w http.ResponseWriter, r *http.Request) {
 		recordMetrics("/spike-cpu", "200")
-		fmt.Fprintf(w, "Triggering CPU Spike for 60 seconds...\n")
+		fmt.Fprintf(w, "Triggering CPU Spike for 300 seconds...\n")
 		
 		go func() {
-			end := time.Now().Add(60 * time.Second)
+			end := time.Now().Add(300 * time.Second)
 			for time.Now().Before(end) {
 				// busy loop
 				x := 1

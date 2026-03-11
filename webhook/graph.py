@@ -67,8 +67,8 @@ def solver_node(state: GraphState) -> GraphState:
     alert = state.get("alert_payload", {})
     logs = state.get("logs", "")
     
-    # We use Flash 2.5 for fast structured outputs
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=GEMINI_API_KEY).with_structured_output(RemediationPlan)
+    # Using Gemma 3 27B from AI Studio to avoid Gemini 2.5 Flash rate limits
+    llm = ChatGoogleGenerativeAI(model="gemma-3-27b-it", temperature=0, google_api_key=GEMINI_API_KEY).with_structured_output(RemediationPlan)
     
     prompt = f"""
     You are an expert Kubernetes SRE. An alert has fired:
@@ -94,7 +94,7 @@ def safety_validation_node(state: GraphState) -> GraphState:
     print("\n--- [NODE] Safety Validator (RBAC Checker) ---")
     plan = state["remediation_plan"]
     
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=GEMINI_API_KEY).with_structured_output(SafetyValidation)
+    llm = ChatGoogleGenerativeAI(model="gemma-3-27b-it", temperature=0, google_api_key=GEMINI_API_KEY).with_structured_output(SafetyValidation)
     
     deny_list = ["rm -rf", "kubectl delete namespace", "kubectl delete pod --all", "halt", "reboot"]
     

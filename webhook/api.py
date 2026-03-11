@@ -5,6 +5,9 @@ import asyncio
 import uuid
 import time
 import sqlite3
+import hashlib
+from fastapi.middleware.cors import CORSMiddleware
+import sqlite3
 from graph import build_graph
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -17,6 +20,16 @@ conn = sqlite3.connect("audit_logs.db", check_same_thread=False)
 memory_saver = SqliteSaver(conn)
 
 app = FastAPI(title="Auto-Remediation Webhook API")
+
+# Setup CORS for Frontend Dashboard
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # In production, restrict this to the frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 graph_app = build_graph(memory_saver)
 
 class AlertPayload(BaseModel):
@@ -88,6 +101,50 @@ async def approve_workflow(thread_id: str):
         
     print(f"✅ Workflow Complete [Thread: {thread_id}].")
     return {"status": "success", "message": f"Thread {thread_id} execution approved and completed."}
+
+# --- Frontend Dashboard API Endpoints ---
+
+@app.get("/threads")
+def list_threads():
+    """Returns a list of all thread IDs currently stored in the SQLite Audit Log."""
+    try:
+        # We query the sqlite checkpointer directly to fetch unique thread IDs
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id DESC")
+        threads = [row[0] for row in cur.fetchall()]
+        return {"threads": threads}
+    except Exception as e:
+        return {"error": f"Failed to fetch threads: {str(e)}"}
+
+@app.get("/threads/{thread_id}")
+def get_thread_state(thread_id: str):
+    """Returns the comprehensive AI state (logs, metrics, LLM plan) for a specific thread."""
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        snapshot = graph_app.get_state(config)
+        if hasattr(snapshot, 'values') and snapshot.values:
+            # Reconstruct the Pydantic models for JSON serialization if they exist
+            values = snapshot.values
+            
+            # Serialize RemediationPlan
+            rem_plan = values.get('remediation_plan')
+            if rem_plan and hasattr(rem_plan, 'model_dump'):
+                values['remediation_plan'] = rem_plan.model_dump()
+            
+            # Serialize SafetyValidation    
+            safety_val = values.get('safety_validation')
+            if safety_val and hasattr(safety_val, 'model_dump'):
+                values['safety_validation'] = safety_val.model_dump()
+                
+            return {
+                "thread_id": thread_id,
+                "status": "pending_approval" if snapshot.next and "execution" in snapshot.next else "completed",
+                "state": values
+            }
+        else:
+            return {"error": f"Thread {thread_id} not found or has no state."}
+    except Exception as e:
+        return {"error": f"Failed to fetch state: {str(e)}"}
 
 if __name__ == "__main__":
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)

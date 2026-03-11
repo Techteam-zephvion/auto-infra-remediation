@@ -75,10 +75,10 @@ def solver_node(state: GraphState) -> GraphState:
     logs = state.get("logs", "")
     metrics = state.get("metrics", "No metrics available.")
 
-    logger.info(f"[SOLVER] Invoking LLM | model=gemma-3-27b-it | logs_len={len(logs)} | metrics_len={len(metrics)}")
+    logger.info(f"[SOLVER] Invoking LLM | model=gemini-2.0-flash | logs_len={len(logs)} | metrics_len={len(metrics)}")
 
     llm = ChatGoogleGenerativeAI(
-        model="gemma-3-27b-it",
+        model="gemini-2.0-flash",
         temperature=0,
         google_api_key=GEMINI_API_KEY
     ).with_structured_output(RemediationPlan)
@@ -111,10 +111,10 @@ def safety_validation_node(state: GraphState) -> GraphState:
     """Safety LLM checks the remediation script against the deny-list."""
     plan = state["remediation_plan"]
 
-    logger.info(f"[VALIDATOR] Running safety check | model=gemma-3-27b-it | script_len={len(plan.script)}")
+    logger.info(f"[VALIDATOR] Running safety check | model=gemini-2.0-flash | script_len={len(plan.script)}")
 
     llm = ChatGoogleGenerativeAI(
-        model="gemma-3-27b-it",
+        model="gemini-2.0-flash",
         temperature=0,
         google_api_key=GEMINI_API_KEY
     ).with_structured_output(SafetyValidation)

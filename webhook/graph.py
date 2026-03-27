@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from typing import TypedDict, List
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 
@@ -18,8 +18,9 @@ load_dotenv()
 # Configure logging
 logger = logging.getLogger(__name__)
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-logger.info(f"[CONFIG] GEMINI_API_KEY configured: {'Yes' if GEMINI_API_KEY else 'No'}")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+logger.info(f"[CONFIG] Ollama model: {OLLAMA_MODEL} at {OLLAMA_BASE_URL}")
 
 # Pydantic Schemas for Structured Output
 class RemediationPlan(BaseModel):
@@ -102,9 +103,8 @@ def solver_node(state: GraphState) -> GraphState:
         logger.info(f"[DATA] Processing alert with {len(str(alert))} chars")
         logger.info(f"[DATA] Processing logs with {len(logs)} chars")
         
-        # We use Flash 2.5 for fast structured outputs
-        logger.info("[AI] Initializing Gemini Flash 2.5 model...")
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=GEMINI_API_KEY).with_structured_output(RemediationPlan)
+        logger.info(f"[AI] Initializing Ollama model: {OLLAMA_MODEL}...")
+        llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, temperature=0).with_structured_output(RemediationPlan)
         
         prompt = f"""
         You are an expert Kubernetes SRE. An alert has fired:
@@ -117,7 +117,7 @@ def solver_node(state: GraphState) -> GraphState:
         Do NOT delete namespaces or entire deployments unless absolutely necessary.
         """
         
-        logger.info("[AI] Sending prompt to Gemini Flash LLM...")
+        logger.info("[AI] Sending prompt to Ollama LLM...")
         plan = llm.invoke([HumanMessage(content=prompt)])
         
         logger.info(f"[ANALYSIS] {plan.analysis[:200]}{'...' if len(plan.analysis) > 200 else ''}")
@@ -148,7 +148,7 @@ def safety_validation_node(state: GraphState) -> GraphState:
         plan = state["remediation_plan"]
         logger.info(f"[SCRIPT] Validating script with {len(plan.script)} characters")
         
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=GEMINI_API_KEY).with_structured_output(SafetyValidation)
+        llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, temperature=0).with_structured_output(SafetyValidation)
         
         deny_list = ["rm -rf", "kubectl delete namespace", "kubectl delete pod --all", "halt", "reboot"]
         logger.info(f"[DENY_LIST] Checking against {len(deny_list)} deny-list patterns: {deny_list}")

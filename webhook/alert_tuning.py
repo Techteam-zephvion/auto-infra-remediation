@@ -103,6 +103,7 @@ class AlertTuningConfig:
             },
             'maintenance_windows': []
         }
+        self.maintenance_windows = []  # Initialize as empty list
         logger.info("[ALERT_TUNING] Loaded default configuration")
     
     def get_threshold(self, alert_type: str) -> Dict[str, Any]:

@@ -88,6 +88,7 @@ async def insert_audit_event(record: dict) -> None:
             
             duration_ms = (time.time() - start_time) * 1000
             span.set_attribute("db.duration_ms", round(duration_ms, 2))
+            logger.info(f"[DB] insert_audit_event: {record['id']} - {duration_ms:.2f}ms")
             
             if duration_ms > 500:
                 logger.warning(f"[DB] SLOW QUERY: insert_audit_event took {duration_ms:.2f}ms")
@@ -141,6 +142,7 @@ async def update_audit_event(record: dict) -> None:
             duration_ms = (time.time() - start_time) * 1000
             span.set_attribute("db.duration_ms", round(duration_ms, 2))
             span.set_attribute("db.rows_affected", 1)  # UPDATE affects 1 row
+            logger.info(f"[DB] update_audit_event: {record['id']} - {record.get('status', 'unknown')} - {duration_ms:.2f}ms")
             
             if duration_ms > 500:
                 logger.warning(f"[DB] SLOW QUERY: update_audit_event took {duration_ms:.2f}ms")

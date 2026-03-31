@@ -576,15 +576,17 @@ async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custo
         
         # Send notification but don't remediate
         notification_service = get_notification_service()
+        message = "Auto-remediation suppressed by alert tuning configuration"
         notification_result = await notification_service.notify(
+            escalation_actions=escalation_actions,
             alert_type=alert_type,
             severity=severity,
+            message=message,
+            workflow_id=workflow_id,
             namespace=namespace,
             pod_name=pod_name,
-            workflow_id=workflow_id,
-            analysis="Auto-remediation suppressed by alert tuning configuration",
-            action_taken="none_suppressed",
-            escalation_actions=escalation_actions
+            analysis=message,
+            action_taken="none_suppressed"
         )
         
         logger.info(f"[WORKFLOW {workflow_id}] Notification sent: {notification_result}")
@@ -705,15 +707,17 @@ async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custo
     if record.get("safety_approved") is False:
         action_taken = "blocked_unsafe"
     
+    message = f"{alert_type.replace('_', ' ').title()} - {action_taken}"
     notification_result = await notification_service.notify(
+        escalation_actions=escalation_actions,
         alert_type=alert_type,
         severity=severity,
+        message=message,
+        workflow_id=workflow_id,
         namespace=namespace,
         pod_name=pod_name,
-        workflow_id=workflow_id,
         analysis=record.get("analysis", "No analysis available"),
-        action_taken=action_taken,
-        escalation_actions=escalation_actions
+        action_taken=action_taken
     )
     
     logger.info(f"[WORKFLOW {workflow_id}] Notification sent: {notification_result}")

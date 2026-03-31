@@ -31,7 +31,7 @@ class EscalationAction(Enum):
 class AlertTuningConfig:
     """Alert tuning configuration manager"""
     
-    def __init__(self, config_path: str = "infra/alert-thresholds.yaml"):
+    def __init__(self, config_path: str = "../infra/alert-thresholds.yaml"):
         self.config_path = Path(config_path)
         self.config: Dict[str, Any] = {}
         self.maintenance_windows: List[Dict[str, Any]] = []

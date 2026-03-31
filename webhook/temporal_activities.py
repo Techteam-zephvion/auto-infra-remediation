@@ -211,21 +211,32 @@ async def record_audit_event(audit_data: Dict[str, Any]) -> Dict[str, bool]:
         
         if status == "running":
             # Initial record
-            await database.insert_audit_event(
-                workflow_id=workflow_id,
-                alert_type=audit_data.get("alert_type", "unknown"),
-            )
+            record = {
+                "id": workflow_id,
+                "timestamp": audit_data.get("timestamp", ""),
+                "alert_type": audit_data.get("alert_type", "unknown"),
+                "status": "running",
+                "analysis": "",
+                "script": "",
+                "safety_approved": None,
+                "safety_reasoning": "",
+                "execution_result": "",
+            }
+            await database.insert_audit_event(record)
         else:
             # Update existing record
-            await database.update_audit_event(
-                workflow_id=workflow_id,
-                status=status,
-                analysis=audit_data.get("analysis", ""),
-                script=audit_data.get("script", ""),
-                safety_approved=audit_data.get("safety_approved", False),
-                safety_reasoning=audit_data.get("safety_reasoning", ""),
-                execution_result=audit_data.get("execution_result", ""),
-            )
+            record = {
+                "id": workflow_id,
+                "status": status,
+                "analysis": audit_data.get("analysis", ""),
+                "script": audit_data.get("script", ""),
+                "safety_approved": audit_data.get("safety_approved", False),
+                "safety_reasoning": audit_data.get("safety_reasoning", ""),
+                "execution_result": audit_data.get("execution_result", ""),
+            }
+            if "duration_seconds" in audit_data:
+                record["duration_seconds"] = audit_data["duration_seconds"]
+            await database.update_audit_event(record)
         
         activity.logger.info(f"[ACTIVITY] Audit event recorded: {workflow_id}")
         return {"success": True}

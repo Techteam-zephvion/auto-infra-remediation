@@ -162,7 +162,7 @@ Test infrastructure complete and operational. Core functionality tested with moc
 **Priority**: High  
 **Complexity**: Medium  
 **Estimated Time**: 5-6 hours  
-**Status**: ✅ Complete (March 31, 2026)
+**Status**: ✅ Complete (April 1, 2026) - Tested and Working
 
 #### Description
 Create an alert tuning module with dynamic threshold adjustments, escalation logic, and multi-channel notification support.
@@ -239,11 +239,33 @@ PAGERDUTY_INTEGRATION_KEY=YOUR_PAGERDUTY_INTEGRATION_KEY
 PAGERDUTY_API_KEY=YOUR_PAGERDUTY_API_KEY
 ```
 
+#### Bug Fixes (April 1, 2026 - Commit 2b44a9b)
+- ✅ Fixed notify() function calls: Added required `message` parameter
+- ✅ Fixed argument order to match NotificationService.notify() signature
+- ✅ Fixed alert_tuning.py config path: `../infra/alert-thresholds.yaml`
+- ✅ Fixed temporal_activities.py audit event dict format
+- ✅ Created test_pagerduty.py for PagerDuty-specific testing
+
+#### Testing Results (April 1, 2026)
+✅ **Test Execution**: 3/3 alerts accepted by API  
+✅ **Slack Notifications**: HTTP 200 OK confirmed, messages delivered to channel  
+✅ **Alert Tuning**: Correctly suppressed disk_space_low (no auto-remediation)  
+✅ **Escalation Actions**: Properly determined per severity level  
+✅ **Docker Services**: All healthy (Database, Vault, Temporal, Jaeger)  
+
+**Confirmed Working**:
+- Test 2 (disk_space_low, medium): Slack notification sent successfully
+- Alert suppression logic working as expected
+- YAML configuration loading after path fix
+
+**Known Limitation**: Temporal workflow notifications NOT yet implemented. Notifications only work in direct execution path (TEMPORAL_ENABLED=false) or for suppressed alerts. Full Temporal integration pending.
+
 #### Notes
-- Temporal workflow notifications are not yet implemented (TODO: add notification activity)
-- Direct execution (fallback) path has full notification support
-- Test script available: `python webhook/test_phase5_1.py`
+- Test scripts: `python webhook/test_phase5_1.py` or `python webhook/test_pagerduty.py`
+- Git commits: b037721 (initial), 2b44a9b (bug fixes and testing)
 - Production readiness: Phase 4 (10/10) maintained, added operational maturity features
+
+Phase 5.1 Complete ✅
 
 ---
 

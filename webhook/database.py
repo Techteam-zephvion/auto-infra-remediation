@@ -11,10 +11,14 @@ history in api.py continues to work as a fallback.
 
 import os
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
+from opentelemetry import trace
+
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 _DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -60,23 +64,39 @@ async def insert_audit_event(record: dict) -> None:
     if not _DATABASE_URL:
         return
 
-    try:
-        conn = await _connect()
-        await conn.execute(
-            """
-            INSERT INTO audit_events
-                (workflow_id, alert_type, status, started_at)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (workflow_id) DO NOTHING
-            """,
-            record["id"],
-            record.get("alert_type", "custom"),
-            "running",
-            datetime.fromisoformat(record["timestamp"]),
-        )
-        await conn.close()
-    except Exception as e:
-        logger.error(f"[DB] insert_audit_event failed: {e}")
+    with tracer.start_as_current_span("db.insert_audit_event") as span:
+        span.set_attribute("db.operation", "INSERT")
+        span.set_attribute("db.table", "audit_events")
+        span.set_attribute("db.workflow_id", record["id"])
+        
+        start_time = time.time()
+        try:
+            conn = await _connect()
+            await conn.execute(
+                """
+                INSERT INTO audit_events
+                    (workflow_id, alert_type, status, started_at)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (workflow_id) DO NOTHING
+                """,
+                record["id"],
+                record.get("alert_type", "custom"),
+                "running",
+                datetime.fromisoformat(record["timestamp"]),
+            )
+            await conn.close()
+            
+            duration_ms = (time.time() - start_time) * 1000
+            span.set_attribute("db.duration_ms", round(duration_ms, 2))
+            
+            if duration_ms > 500:
+                logger.warning(f"[DB] SLOW QUERY: insert_audit_event took {duration_ms:.2f}ms")
+                span.set_attribute("db.slow_query", True)
+                
+        except Exception as e:
+            span.set_attribute("db.error", str(e))
+            logger.error(f"[DB] insert_audit_event failed: {e}")
+            raise
 
 
 async def update_audit_event(record: dict) -> None:
@@ -84,34 +104,52 @@ async def update_audit_event(record: dict) -> None:
     if not _DATABASE_URL:
         return
 
-    try:
-        conn = await _connect()
-        await conn.execute(
-            """
-            UPDATE audit_events SET
-                status           = $2,
-                analysis         = $3,
-                script           = $4,
-                safety_approved  = $5,
-                safety_reasoning = $6,
-                execution_result = $7,
-                duration_seconds = $8,
-                completed_at     = $9
-            WHERE workflow_id = $1
-            """,
-            record["id"],
-            record.get("status", "completed"),
-            record.get("analysis"),
-            record.get("script"),
-            record.get("safety_approved"),
-            record.get("safety_reasoning"),
-            record.get("execution_result"),
-            record.get("duration_seconds"),
-            datetime.utcnow(),
-        )
-        await conn.close()
-    except Exception as e:
-        logger.error(f"[DB] update_audit_event failed: {e}")
+    with tracer.start_as_current_span("db.update_audit_event") as span:
+        span.set_attribute("db.operation", "UPDATE")
+        span.set_attribute("db.table", "audit_events")
+        span.set_attribute("db.workflow_id", record["id"])
+        span.set_attribute("db.status", record.get("status", "completed"))
+        
+        start_time = time.time()
+        try:
+            conn = await _connect()
+            result = await conn.execute(
+                """
+                UPDATE audit_events SET
+                    status           = $2,
+                    analysis         = $3,
+                    script           = $4,
+                    safety_approved  = $5,
+                    safety_reasoning = $6,
+                    execution_result = $7,
+                    duration_seconds = $8,
+                    completed_at     = $9
+                WHERE workflow_id = $1
+                """,
+                record["id"],
+                record.get("status", "completed"),
+                record.get("analysis"),
+                record.get("script"),
+                record.get("safety_approved"),
+                record.get("safety_reasoning"),
+                record.get("execution_result"),
+                record.get("duration_seconds"),
+                datetime.utcnow(),
+            )
+            await conn.close()
+            
+            duration_ms = (time.time() - start_time) * 1000
+            span.set_attribute("db.duration_ms", round(duration_ms, 2))
+            span.set_attribute("db.rows_affected", 1)  # UPDATE affects 1 row
+            
+            if duration_ms > 500:
+                logger.warning(f"[DB] SLOW QUERY: update_audit_event took {duration_ms:.2f}ms")
+                span.set_attribute("db.slow_query", True)
+                
+        except Exception as e:
+            span.set_attribute("db.error", str(e))
+            logger.error(f"[DB] update_audit_event failed: {e}")
+            raise
 
 
 async def fetch_audit_events(limit: int = 50) -> Optional[list]:
@@ -119,21 +157,40 @@ async def fetch_audit_events(limit: int = 50) -> Optional[list]:
     if not _DATABASE_URL:
         return None
 
-    try:
-        conn = await _connect()
-        rows = await conn.fetch(
-            """
-            SELECT workflow_id, alert_type, status, analysis, script,
-                   safety_approved, safety_reasoning, execution_result,
-                   duration_seconds, started_at, completed_at
-            FROM audit_events
-            ORDER BY started_at DESC
-            LIMIT $1
-            """,
-            limit,
-        )
-        await conn.close()
-        return [dict(r) for r in rows]
-    except Exception as e:
-        logger.error(f"[DB] fetch_audit_events failed: {e}")
-        return None
+    with tracer.start_as_current_span("db.fetch_audit_events") as span:
+        span.set_attribute("db.operation", "SELECT")
+        span.set_attribute("db.table", "audit_events")
+        span.set_attribute("db.limit", limit)
+        
+        start_time = time.time()
+        try:
+            conn = await _connect()
+            rows = await conn.fetch(
+                """
+                SELECT workflow_id, alert_type, status, analysis, script,
+                       safety_approved, safety_reasoning, execution_result,
+                       duration_seconds, started_at, completed_at
+                FROM audit_events
+                ORDER BY started_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+            await conn.close()
+            
+            duration_ms = (time.time() - start_time) * 1000
+            rows_fetched = len(rows)
+            
+            span.set_attribute("db.duration_ms", round(duration_ms, 2))
+            span.set_attribute("db.rows_fetched", rows_fetched)
+            
+            if duration_ms > 500:
+                logger.warning(f"[DB] SLOW QUERY: fetch_audit_events took {duration_ms:.2f}ms (returned {rows_fetched} rows)")
+                span.set_attribute("db.slow_query", True)
+            
+            return [dict(r) for r in rows]
+            
+        except Exception as e:
+            span.set_attribute("db.error", str(e))
+            logger.error(f"[DB] fetch_audit_events failed: {e}")
+            return None

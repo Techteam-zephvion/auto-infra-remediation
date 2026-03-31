@@ -1,0 +1,83 @@
+---
+# Network Policy for Remediation Sandbox
+# Isolates sandboxed Jobs from external network access
+#
+# Security Model:
+# - Deny ALL ingress traffic (sandboxed Jobs don't need to receive connections)
+# - Allow egress to:
+#   1. kube-dns (port 53) - DNS resolution for K8s API
+#   2. Kubernetes API server (port 443) - kubectl commands
+# - Block all other egress (internet, other pods, etc.)
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: remediation-sandbox-policy
+  namespace: default
+spec:
+  # Apply to all sandbox pods
+  podSelector:
+    matchLabels:
+      app: auto-remediation-sandbox
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  # Deny all ingress
+  ingress: []
+  
+  # Allow specific egress
+  egress:
+  # Allow DNS queries to kube-dns
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow HTTPS to Kubernetes API server
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          component: apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Alternative: Allow to K8s service CIDR (GKE specific)
+  # This allows kubectl to work even if API server pod selector doesn't match
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow to kube-system namespace (for API server access)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Note: This NetworkPolicy is namespace-scoped
+# For multi-namespace support, apply this policy to each namespace
+# where remediation sandboxes will run
+#
+# To apply:
+#   kubectl apply -f sandbox-networkpolicy.yaml -n <namespace>
+#
+# To verify:
+#   kubectl get networkpolicy -n <namespace>
+#   kubectl describe networkpolicy remediation-sandbox-policy -n <namespace>

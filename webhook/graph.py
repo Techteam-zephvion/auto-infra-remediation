@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from opentelemetry import trace
 
-from k8s_client import get_pod_logs, get_pods_with_labels, execute_remediation
+from k8s_client import get_pod_logs, get_pods_with_labels, execute_remediation, execute_remediation_sandboxed
 from tracing import get_tracer
 
 load_dotenv()
@@ -400,11 +400,27 @@ def execute_remediation_node(state: GraphState) -> GraphState:
         try:
             validation = state["safety_validation"]
             plan = state["remediation_plan"]
+            alert_payload = state.get("alert_payload", {})
             span.set_attribute("approved", validation.approved)
 
+            # Extract context for sandboxed execution
+            alerts = alert_payload.get("alerts", [])
+            labels = alerts[0].get("labels", {}) if alerts else {}
+            namespace = labels.get("namespace", "default")
+            pod_name = labels.get("pod", "unknown")
+            alert_type = labels.get("alertname", "custom")
+            workflow_id = f"WF-{int(datetime.now().timestamp())}"
+
             if validation.approved:
-                logger.info("[APPROVED] Script approved, proceeding with execution...")
-                res = execute_remediation(plan.script)
+                logger.info("[APPROVED] Script approved, proceeding with sandboxed execution...")
+                # Use sandboxed execution in Kubernetes Job
+                res = execute_remediation_sandboxed(
+                    script=plan.script,
+                    workflow_id=workflow_id,
+                    namespace=namespace,
+                    alert_type=alert_type,
+                    pod_name=pod_name
+                )
                 span.set_attribute("execution.outcome", "executed")
                 logger.info(f"[SUCCESS] [EXECUTION] Result: {res}")
                 result = res

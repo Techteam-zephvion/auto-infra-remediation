@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from datetime import datetime
 from kubernetes import client, config
 
@@ -127,3 +128,86 @@ def execute_remediation(script: str) -> str:
         logger.error(f"[ERROR] [EXECUTION] Remediation failed: {str(e)}")
         logger.exception("Full error traceback for remediation execution:")
         return f"Execution failed with error: {str(e)}"
+
+
+def execute_remediation_sandboxed(
+    script: str,
+    workflow_id: str,
+    namespace: str = "default",
+    alert_type: str = "custom",
+    pod_name: str = "unknown"
+) -> str:
+    """
+    Execute remediation script in isolated Kubernetes Job
+    
+    This function uses the JobExecutor to run scripts in ephemeral Jobs with:
+    - Network isolation (NetworkPolicy)
+    - Resource limits (CPU, memory, timeout)
+    - Security context (non-root, read-only filesystem)
+    - Automatic cleanup after completion
+    
+    Args:
+        script: Shell script to execute
+        workflow_id: Unique workflow identifier
+        namespace: Kubernetes namespace
+        alert_type: Alert type triggering remediation
+        pod_name: Target pod name
+    
+    Returns:
+        Execution result string
+    """
+    exec_start = datetime.now()
+    logger.info(f"[SANDBOXED_EXECUTION] Starting sandboxed execution for {workflow_id}")
+    logger.info(f"[SANDBOX] Target: namespace={namespace}, pod={pod_name}, alert_type={alert_type}")
+    logger.info(f"[SCRIPT] Script length: {len(script)} characters")
+    logger.info(f"[SCRIPT] Full contents:\n{'-'*50}\n{script}\n{'-'*50}")
+    
+    try:
+        # Import JobExecutor (lazy import to avoid circular dependencies)
+        from job_executor import get_job_executor
+        
+        executor = get_job_executor()
+        
+        # Run async execution in sync context
+        logger.info("[SANDBOX] Creating isolated Kubernetes Job...")
+        result_dict = asyncio.run(
+            executor.execute_script(
+                script=script,
+                workflow_id=workflow_id,
+                namespace=namespace,
+                alert_type=alert_type,
+                pod_name=pod_name,
+                timeout=60
+            )
+        )
+        
+        exec_duration = (datetime.now() - exec_start).total_seconds()
+        
+        # Parse results
+        if result_dict['success']:
+            logger.info(f"[SUCCESS] [SANDBOXED_EXECUTION] Job {result_dict['job_name']} completed successfully")
+            logger.info(f"[SANDBOX] Duration: {result_dict['duration_seconds']}s")
+            logger.info(f"[SANDBOX] Exit code: {result_dict['exit_code']}")
+            logger.info(f"[SANDBOX] Output:\n{result_dict['stdout']}")
+            
+            result = f"Remediation executed successfully in sandboxed Job '{result_dict['job_name']}'. " \
+                     f"Duration: {result_dict['duration_seconds']}s. " \
+                     f"Output: {result_dict['stdout'][:200]}"
+        else:
+            logger.error(f"[ERROR] [SANDBOXED_EXECUTION] Job {result_dict['job_name']} failed")
+            logger.error(f"[SANDBOX] Error: {result_dict['error']}")
+            logger.error(f"[SANDBOX] Stderr: {result_dict['stderr']}")
+            
+            result = f"Remediation failed in sandboxed Job: {result_dict['error']}"
+        
+        logger.info(f"[SANDBOXED_EXECUTION] Total execution time: {exec_duration:.2f}s")
+        return result
+        
+    except Exception as e:
+        exec_duration = (datetime.now() - exec_start).total_seconds()
+        logger.error(f"[ERROR] [SANDBOXED_EXECUTION] Failed to create sandboxed Job: {e}")
+        logger.exception("Full error traceback:")
+        
+        # Fallback to simulated execution if sandboxing fails
+        logger.warning("[FALLBACK] Falling back to simulated execution")
+        return execute_remediation(script)

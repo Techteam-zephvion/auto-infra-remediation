@@ -1,0 +1,97 @@
+---
+# Kubernetes Job Template for Sandboxed Script Execution
+# Used by job_executor.py to run remediation scripts in isolated environments
+#
+# Security Features:
+# - runAsNonRoot: Runs as UID 1000 (non-privileged user)
+# - readOnlyRootFilesystem: Prevents writing to container filesystem
+# - allowPrivilegeEscalation: false - No privilege escalation allowed
+# - Resource limits: 256Mi memory, 100m CPU, 60s timeout
+# - Network isolation via NetworkPolicy (see sandbox-networkpolicy.yaml)
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: remediation-sandbox-{workflow_id}
+  namespace: {namespace}
+  labels:
+    app: auto-remediation-sandbox
+    workflow-id: "{workflow_id}"
+    managed-by: auto-infra-remediation
+spec:
+  # Job automatically deleted 300s (5 minutes) after completion
+  ttlSecondsAfterFinished: 300
+  
+  # Don't restart on failure - single execution attempt
+  backoffLimit: 0
+  
+  # Job timeout: 60 seconds
+  activeDeadlineSeconds: 60
+  
+  template:
+    metadata:
+      labels:
+        app: auto-remediation-sandbox
+        workflow-id: "{workflow_id}"
+    spec:
+      # Don't restart pod on failure
+      restartPolicy: Never
+      
+      # Use default service account (minimal permissions)
+      serviceAccountName: default
+      
+      # Security context for the pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      
+      containers:
+      - name: kubectl-executor
+        image: bitnami/kubectl:latest
+        
+        # Command placeholder - will be replaced by job_executor.py
+        command: ["/bin/sh"]
+        args: ["-c", "{script}"]
+        
+        # Security context for the container
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+              - ALL
+        
+        # Resource limits
+        resources:
+          limits:
+            memory: "256Mi"
+            cpu: "100m"
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+        
+        # Environment variables
+        env:
+        - name: WORKFLOW_ID
+          value: "{workflow_id}"
+        - name: ALERT_TYPE
+          value: "{alert_type}"
+        - name: NAMESPACE
+          value: "{namespace}"
+        - name: POD_NAME
+          value: "{pod_name}"
+        
+        # Temporary directory for writable storage (emptyDir)
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 10Mi

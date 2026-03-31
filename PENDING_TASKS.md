@@ -347,7 +347,43 @@ Instrument PostgreSQL queries with OpenTelemetry spans for visibility into datab
 - Database tracing works automatically when DATABASE_URL is configured
 - In-memory mode (no DATABASE_URL) bypasses tracing (no spans created)
 - Slow query threshold (500ms) can be adjusted in database.py if needed
-- Git commit: a95bc3b
+- Git commit: a95bc3b (initial implementation)
+- Git commit: 70bbca8 (documentation update)
+- Git commit: a9e36e9 (bug fixes - April 1, 2026)
+
+#### Bug Fixes (April 1, 2026)
+During testing, several configuration and logging issues were identified and resolved:
+
+✅ **maintenance_windows Initialization Bug**:
+- **Problem**: YAML file had `maintenance_windows:` (null) instead of empty array
+- **Impact**: TypeError when iterating maintenance windows in alert_tuning.py
+- **Fix**: Changed YAML to `maintenance_windows: []` and added `self.maintenance_windows = []` initialization in _load_defaults()
+- **Files**: infra/alert-thresholds.yaml, webhook/alert_tuning.py
+
+✅ **Database Operation Logging**:
+- **Problem**: No visibility into database operation execution
+- **Impact**: Difficult to verify OpenTelemetry spans were being created
+- **Fix**: Added INFO logging to insert_audit_event and update_audit_event
+- **Files**: webhook/database.py
+- **Example Log**: `[DB] insert_audit_event: WF-1774985303 - 50.94ms`
+
+✅ **Testing Environment**:
+- **Discovery**: Database tracing only works in direct execution (not through Temporal activities)
+- **Workaround**: Set TEMPORAL_ENABLED=false for testing database traces
+- **Future TODO**: Add OpenTelemetry instrumentation to temporal_activities.py
+
+#### Verification Results
+✅ **Database Operations Confirmed Working**:
+```
+2026-04-01 00:58:23,266 - database - INFO - [DB] insert_audit_event: WF-1774985303 - 50.94ms
+```
+
+✅ **Jaeger UI Verification**:
+- URL: http://localhost:16686
+- Service: auto-infra-remediation
+- Operations visible: db.insert_audit_event, db.update_audit_event
+- Span attributes: db.operation, db.table, db.workflow_id, db.duration_ms
+- Slow query detection working (500ms threshold)
 
 Phase 5.2 Complete ✅
 

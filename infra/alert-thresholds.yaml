@@ -1,0 +1,128 @@
+# Alert Threshold Configuration
+# Defines per-alert-type thresholds and escalation logic
+
+alert_types:
+  cpu_spike:
+    threshold: 80
+    unit: percent
+    duration: 5m
+    severity: high
+    auto_remediate: true
+    escalation:
+      - auto_remediate
+      - notify_slack
+    description: "CPU usage above threshold for sustained period"
+  
+  memory_leak:
+    threshold: 85
+    unit: percent
+    duration: 10m
+    severity: critical
+    auto_remediate: true
+    escalation:
+      - auto_remediate
+      - notify_slack
+      - create_pagerduty
+    description: "Memory usage continuously increasing"
+  
+  pod_crash_loop:
+    threshold: 3
+    unit: count
+    duration: 5m
+    severity: high
+    auto_remediate: true
+    escalation:
+      - auto_remediate
+      - notify_slack
+    description: "Pod restarting repeatedly in short time window"
+  
+  disk_space_low:
+    threshold: 90
+    unit: percent
+    duration: 10m
+    severity: medium
+    auto_remediate: false
+    escalation:
+      - notify_slack
+    description: "Disk space usage above threshold"
+  
+  service_unavailable:
+    threshold: 1
+    unit: count
+    duration: 1m
+    severity: critical
+    auto_remediate: true
+    escalation:
+      - auto_remediate
+      - notify_slack
+      - create_pagerduty
+    description: "Service endpoint not responding"
+  
+  high_error_rate:
+    threshold: 5
+    unit: percent
+    duration: 5m
+    severity: high
+    auto_remediate: true
+    escalation:
+      - auto_remediate
+      - notify_slack
+    description: "Application error rate above threshold"
+  
+  database_connection_pool_exhausted:
+    threshold: 95
+    unit: percent
+    duration: 2m
+    severity: critical
+    auto_remediate: true
+    escalation:
+      - auto_remediate
+      - notify_slack
+      - create_pagerduty
+    description: "Database connection pool near capacity"
+  
+  slow_response_time:
+    threshold: 5000
+    unit: milliseconds
+    duration: 10m
+    severity: medium
+    auto_remediate: false
+    escalation:
+      - notify_slack
+    description: "API response times degraded"
+
+# Maintenance windows - suppress all auto-remediation during these periods
+# Format: ISO 8601 datetime strings
+maintenance_windows:
+  # Example:
+  # - name: "Production Deployment"
+  #   start: "2026-04-01T02:00:00"
+  #   end: "2026-04-01T04:00:00"
+  #   reason: "Scheduled deployment window"
+  #
+  # - name: "Database Migration"
+  #   start: "2026-04-05T01:00:00"
+  #   end: "2026-04-05T03:00:00"
+  #   reason: "PostgreSQL upgrade"
+
+# Global escalation settings
+escalation_settings:
+  slack:
+    enabled: true
+    rate_limit: 10  # Max notifications per hour
+    channels:
+      critical: "#alerts-critical"
+      high: "#alerts-high"
+      medium: "#alerts-medium"
+  
+  pagerduty:
+    enabled: true
+    rate_limit: 5  # Max incidents per hour
+    auto_resolve: true
+    auto_resolve_timeout: 3600  # seconds
+  
+  # Notification rate limiting
+  rate_limiting:
+    enabled: true
+    max_per_hour: 20
+    cooldown_period: 300  # seconds between duplicate alerts

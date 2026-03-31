@@ -15,6 +15,8 @@ setup_tracing()
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from graph import build_graph
 from database import setup_audit_table, insert_audit_event, update_audit_event, fetch_audit_events
+from alert_tuning import get_alert_tuning
+from notifications import get_notification_service
 
 # ── Prometheus Metrics ────────────────────────────────────────────────────────
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST, CollectorRegistry, REGISTRY
@@ -509,11 +511,86 @@ async def receive_alert(request: Request):
         return {"status": "error", "message": f"Failed to process alert: {str(e)}"}
 
 
+# ── Helper Functions ──────────────────────────────────────────────────────────
+def extract_alert_info(alert_payload: dict, default_alert_type: str = "custom"):
+    """
+    Extract alert type and severity from AlertManager payload.
+    Returns (alert_type, severity, namespace, pod_name).
+    """
+    try:
+        if "alerts" in alert_payload and len(alert_payload["alerts"]) > 0:
+            first_alert = alert_payload["alerts"][0]
+            labels = first_alert.get("labels", {})
+            
+            # Map AlertManager alert names to our alert types
+            alert_name = labels.get("alertname", "").lower()
+            alert_type_mapping = {
+                "highcpuusage": "cpu_spike",
+                "cpuspike": "cpu_spike",
+                "highmemoryusage": "memory_leak",
+                "memoryleak": "memory_leak",
+                "podcrashlooping": "pod_crash_loop",
+                "crashloopbackoff": "pod_crash_loop",
+                "diskspacelow": "disk_space_low",
+                "serviceunavailable": "service_unavailable",
+                "higherrorrate": "high_error_rate",
+                "databaseconnectionpoolexhausted": "database_connection_pool_exhausted",
+                "slowresponsetime": "slow_response_time",
+            }
+            
+            alert_type = alert_type_mapping.get(alert_name.replace("_", "").replace("-", ""), default_alert_type)
+            severity = labels.get("severity", "medium").lower()
+            namespace = labels.get("namespace", "default")
+            pod_name = labels.get("pod", labels.get("pod_name", "unknown"))
+            
+            return alert_type, severity, namespace, pod_name
+        
+        return default_alert_type, "medium", "default", "unknown"
+    
+    except Exception as e:
+        logger.warning(f"[ALERT] Failed to extract alert info: {e}")
+        return default_alert_type, "medium", "default", "unknown"
+
+
 # ── Workflow runner ───────────────────────────────────────────────────────────
 async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custom"):
     workflow_start = datetime.now()
     workflow_id = f"WF-{int(workflow_start.timestamp())}"
-    logger.info(f"[WORKFLOW {workflow_id}] Starting remediation workflow")
+    
+    # Extract alert details
+    alert_type_detected, severity, namespace, pod_name = extract_alert_info(alert_payload, alert_type)
+    if alert_type == "custom":  # Override if we detected it from payload
+        alert_type = alert_type_detected
+    
+    logger.info(f"[WORKFLOW {workflow_id}] Starting remediation workflow: type={alert_type}, severity={severity}, namespace={namespace}, pod={pod_name}")
+    
+    # Alert Tuning: Check if we should proceed with auto-remediation
+    alert_tuning = get_alert_tuning()
+    should_remediate = alert_tuning.should_auto_remediate(alert_type, severity)
+    escalation_actions = alert_tuning.get_escalation_actions(alert_type, severity)
+    
+    if not should_remediate:
+        # Suppressed during maintenance or disabled for this alert type
+        logger.info(f"[WORKFLOW {workflow_id}] Auto-remediation suppressed: type={alert_type}, severity={severity}")
+        logger.info(f"[WORKFLOW {workflow_id}] Escalation actions: {escalation_actions}")
+        
+        # Send notification but don't remediate
+        notification_service = get_notification_service()
+        notification_result = await notification_service.notify(
+            alert_type=alert_type,
+            severity=severity,
+            namespace=namespace,
+            pod_name=pod_name,
+            workflow_id=workflow_id,
+            analysis="Auto-remediation suppressed by alert tuning configuration",
+            action_taken="none_suppressed",
+            escalation_actions=escalation_actions
+        )
+        
+        logger.info(f"[WORKFLOW {workflow_id}] Notification sent: {notification_result}")
+        return
+    
+    logger.info(f"[WORKFLOW {workflow_id}] Auto-remediation approved, escalation actions: {escalation_actions}")
     
     # Try Temporal first, fall back to direct execution
     from temporal_client import start_remediation_workflow as start_temporal_workflow
@@ -525,8 +602,10 @@ async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custo
         remediation_total.labels(alert_type=alert_type).inc()
         active_workflows.inc()
         
-        # Note: Workflow will complete asynchronously in Temporal worker
-        # Metrics and audit trail are handled by temporal_activities.py
+        # TODO: Add notification activity to temporal_workflows.py to send notifications after workflow completes
+        # For now, notifications are only sent for direct execution (fallback) path
+        logger.info(f"[WORKFLOW {workflow_id}] Escalation actions: {escalation_actions} (Temporal notifications not yet implemented)")
+        
         return
     
     # Fallback: Direct LangGraph execution (original implementation)
@@ -619,6 +698,25 @@ async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custo
 
     # Persist final state to PostgreSQL
     await update_audit_event(record)
+    
+    # Send notifications based on escalation actions
+    notification_service = get_notification_service()
+    action_taken = "completed" if record["status"] == "completed" else "failed"
+    if record.get("safety_approved") is False:
+        action_taken = "blocked_unsafe"
+    
+    notification_result = await notification_service.notify(
+        alert_type=alert_type,
+        severity=severity,
+        namespace=namespace,
+        pod_name=pod_name,
+        workflow_id=workflow_id,
+        analysis=record.get("analysis", "No analysis available"),
+        action_taken=action_taken,
+        escalation_actions=escalation_actions
+    )
+    
+    logger.info(f"[WORKFLOW {workflow_id}] Notification sent: {notification_result}")
 
 
 if __name__ == "__main__":

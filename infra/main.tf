@@ -1,8 +1,8 @@
 terraform {
   required_providers {
-    kind = {
-      source  = "tehcyx/kind"
-      version = "~> 0.6.0"
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
     }
     helm = {
       source  = "hashicorp/helm"
@@ -13,53 +13,107 @@ terraform {
       version = "~> 2.32"
     }
   }
+  
+  # ── Remote Backend (GCS) ────────────────────────────────────────────────────
+  # Store Terraform state in Google Cloud Storage for:
+  # - Team collaboration (shared state)
+  # - State locking (prevent concurrent modifications)
+  # - Versioning (state history and rollback)
+  # - Security (IAM-controlled access)
+  #
+  # Setup:
+  #   1. Create GCS bucket: gsutil mb gs://${PROJECT_ID}-terraform-state
+  #   2. Enable versioning: gsutil versioning set on gs://${PROJECT_ID}-terraform-state
+  #   3. Set lifecycle: gsutil lifecycle set lifecycle.json gs://${PROJECT_ID}-terraform-state
+  #   4. Migrate state: terraform init -migrate-state
+  #
+  # Uncomment and configure when ready for production:
+  # backend "gcs" {
+  #   bucket  = "my-project-terraform-state"
+  #   prefix  = "auto-remediation/state"
+  # }
 }
 
-provider "kind" {}
+# ── Variables ─────────────────────────────────────────────────────────────────
 
-resource "kind_cluster" "default" {
-  name           = "auto-remediation-cluster"
-  node_image     = "kindest/node:v1.31.2"
-  wait_for_ready = true
-
-  kind_config {
-    kind        = "Cluster"
-    api_version = "kind.x-k8s.io/v1alpha4"
-
-    node {
-      role = "control-plane"
-      # Expose ports if necessary for external access
-      extra_port_mappings {
-        container_port = 30080
-        host_port      = 8088
-        protocol       = "TCP"
-      }
-    }
-  }
+variable "project_id" {
+  description = "GCP project ID"
+  type        = string
 }
+
+variable "region" {
+  description = "GCP region for the cluster"
+  type        = string
+  default     = "us-central1"
+}
+
+variable "cluster_name" {
+  description = "GKE Autopilot cluster name"
+  type        = string
+  default     = "auto-remediation-cluster"
+}
+
+variable "webhook_url" {
+  description = "AlertManager webhook URL (public IP or internal service URL of the remediation API)"
+  type        = string
+  default     = "http://auto-remediation-webhook.default.svc.cluster.local:8001/alert"
+}
+
+# ── Providers ─────────────────────────────────────────────────────────────────
+
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+data "google_client_config" "default" {}
 
 provider "kubernetes" {
-  host                   = kind_cluster.default.endpoint
-  client_certificate     = kind_cluster.default.client_certificate
-  client_key             = kind_cluster.default.client_key
-  cluster_ca_certificate = kind_cluster.default.cluster_ca_certificate
+  host                   = "https://${google_container_cluster.autopilot.endpoint}"
+  token                  = data.google_client_config.default.access_token
+  cluster_ca_certificate = base64decode(google_container_cluster.autopilot.master_auth[0].cluster_ca_certificate)
 }
 
 provider "helm" {
   kubernetes {
-    host                   = kind_cluster.default.endpoint
-    client_certificate     = kind_cluster.default.client_certificate
-    client_key             = kind_cluster.default.client_key
-    cluster_ca_certificate = kind_cluster.default.cluster_ca_certificate
+    host                   = "https://${google_container_cluster.autopilot.endpoint}"
+    token                  = data.google_client_config.default.access_token
+    cluster_ca_certificate = base64decode(google_container_cluster.autopilot.master_auth[0].cluster_ca_certificate)
   }
 }
+
+# ── GKE Autopilot Cluster ─────────────────────────────────────────────────────
+
+resource "google_container_cluster" "autopilot" {
+  name     = var.cluster_name
+  location = var.region
+
+  # Autopilot: Google manages nodes, scaling, and infrastructure
+  enable_autopilot = true
+
+  # Required for Autopilot
+  ip_allocation_policy {}
+
+  release_channel {
+    channel = "REGULAR"
+  }
+
+  # Enable Workload Identity for pod-level IAM
+  workload_identity_config {
+    workload_pool = "${var.project_id}.svc.id.goog"
+  }
+}
+
+# ── Monitoring Namespace ──────────────────────────────────────────────────────
 
 resource "kubernetes_namespace" "monitoring" {
   metadata {
     name = "monitoring"
   }
-  depends_on = [kind_cluster.default]
+  depends_on = [google_container_cluster.autopilot]
 }
+
+# ── Prometheus + AlertManager ─────────────────────────────────────────────────
 
 resource "helm_release" "prometheus" {
   name       = "prometheus"
@@ -67,7 +121,7 @@ resource "helm_release" "prometheus" {
   chart      = "kube-prometheus-stack"
   namespace  = kubernetes_namespace.monitoring.metadata[0].name
   version    = "62.3.1"
-  wait       = false # Set to false to not block tf apply for too long, metrics will come up
+  wait       = false
 
   values = [
     <<-EOF
@@ -81,7 +135,6 @@ resource "helm_release" "prometheus" {
           group_interval: 10s
           repeat_interval: 1h
           receiver: 'webhook-solver'
-          # Send all alerts to our python service
           routes:
             - receiver: 'webhook-solver'
               matchers:
@@ -89,7 +142,7 @@ resource "helm_release" "prometheus" {
         receivers:
           - name: 'webhook-solver'
             webhook_configs:
-              - url: 'http://host.docker.internal:8000/alert'
+              - url: '${var.webhook_url}'
                 send_resolved: true
     prometheus:
       prometheusSpec:
@@ -101,4 +154,17 @@ resource "helm_release" "prometheus" {
   ]
 
   depends_on = [kubernetes_namespace.monitoring]
+}
+
+# ── Outputs ───────────────────────────────────────────────────────────────────
+
+output "cluster_endpoint" {
+  description = "GKE Autopilot cluster endpoint"
+  value       = google_container_cluster.autopilot.endpoint
+  sensitive   = true
+}
+
+output "kubeconfig_command" {
+  description = "Command to configure kubectl"
+  value       = "gcloud container clusters get-credentials ${var.cluster_name} --region ${var.region} --project ${var.project_id}"
 }

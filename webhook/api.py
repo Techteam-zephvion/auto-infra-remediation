@@ -1,25 +1,144 @@
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import uvicorn
 import asyncio
 import logging
 import sys
 from datetime import datetime
-from graph import build_graph
+from contextlib import asynccontextmanager
 
-# Configure comprehensive logging
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+# ── Tracing must be initialised before graph import ───────────────────────────
+from tracing import setup_tracing
+setup_tracing()
+
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from graph import build_graph
+from database import setup_audit_table, insert_audit_event, update_audit_event, fetch_audit_events
+
+# ── Prometheus Metrics ────────────────────────────────────────────────────────
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST, CollectorRegistry, REGISTRY
+import os
+
+# Use a custom registry to avoid conflicts on reload, or check if running with reload
+_USE_CUSTOM_REGISTRY = os.getenv("PROMETHEUS_MULTIPROC_DIR") is not None
+
+if _USE_CUSTOM_REGISTRY:
+    # For production with multiple workers
+    from prometheus_client import CollectorRegistry
+    prom_registry = CollectorRegistry()
+else:
+    # For development - use default registry
+    prom_registry = REGISTRY
+
+# Helper to safely create or reuse metrics
+def _get_metric(metric_type, name, *args, **kwargs):
+    """Get existing metric or create new one, avoiding duplicates."""
+    # Check if metric already exists in registry
+    for collector in list(prom_registry._collector_to_names.keys()):
+        if hasattr(collector, '_name') and collector._name == name:
+            return collector
+    
+    # Create new metric with our registry
+    kwargs['registry'] = prom_registry
+    return metric_type(name, *args, **kwargs)
+
+# Remediation pipeline metrics
+remediation_total = _get_metric(
+    Counter,
+    'remediation_workflows_total',
+    'Total number of remediation workflows started',
+    ['alert_type']
+)
+
+remediation_duration_seconds = _get_metric(
+    Histogram,
+    'remediation_duration_seconds',
+    'Duration of remediation workflow execution',
+    ['alert_type', 'status'],
+    buckets=[5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
+)
+
+safety_validation_denials = _get_metric(
+    Counter,
+    'safety_validation_denials_total',
+    'Number of scripts denied by safety validation',
+    ['alert_type', 'reason']
+)
+
+execution_failures = _get_metric(
+    Counter,
+    'remediation_execution_failures_total',
+    'Number of failed remediation executions',
+    ['alert_type']
+)
+
+active_workflows = _get_metric(
+    Gauge,
+    'remediation_active_workflows',
+    'Number of currently active remediation workflows'
+)
+
+llm_invocation_failures = _get_metric(
+    Counter,
+    'llm_invocation_failures_total',
+    'Number of LLM invocation failures',
+    ['node', 'error_type']
+)
+
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('auto_remediation.log')
-    ]
+        logging.FileHandler('auto_remediation.log'),
+    ],
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Auto-Remediation Webhook API")
+# ── Lifespan Event Handler ───────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown."""
+    # Startup
+    logger.info(f"[STARTUP] Auto-Remediation Webhook API starting at {datetime.now()}")
+    _validate_security_configuration()
+    await setup_audit_table()
+    
+    # Initialize Vault client
+    from vault_client import get_vault_client, initialize_vault_secrets
+    vault_client = get_vault_client()
+    if vault_client:
+        logger.info("[STARTUP] Vault client connected successfully")
+        # Optionally initialize secrets on first run
+        # initialize_vault_secrets()
+    else:
+        logger.warning("[STARTUP] Vault unavailable - using environment variables")
+    
+    # Initialize Temporal client
+    from temporal_client import get_temporal_client
+    temporal_client = await get_temporal_client()
+    if temporal_client:
+        logger.info("[STARTUP] Temporal client connected successfully")
+    else:
+        logger.warning("[STARTUP] Temporal unavailable - will use direct execution")
+    
+    yield
+    
+    # Shutdown
+    logger.info(f"[SHUTDOWN] Auto-Remediation Webhook API shutting down at {datetime.now()}")
+    
+    # Close Temporal client
+    from temporal_client import close_temporal_client
+    await close_temporal_client()
+
+# ── App ───────────────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="Auto-Remediation Webhook API",
+    lifespan=lifespan
+)
+FastAPIInstrumentor.instrument_app(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,10 +150,10 @@ app.add_middleware(
 
 graph_app = build_graph()
 
-# In-memory remediation history (max 50 entries)
+# In-memory fallback — used when DATABASE_URL is not set
 remediation_history = []
 
-# Predefined test alert payloads
+# ── Test payloads ─────────────────────────────────────────────────────────────
 TEST_ALERTS = {
     "cpu_spike": {
         "receiver": "auto-remediation-webhook",
@@ -45,13 +164,13 @@ TEST_ALERTS = {
                 "alertname": "HighCPUUsage",
                 "namespace": "default",
                 "severity": "critical",
-                "app": "auto-remediation-service"
+                "app": "auto-remediation-service",
             },
             "annotations": {
                 "summary": "CPU usage is above 90%",
-                "description": "Pod is experiencing sustained high CPU usage above threshold"
-            }
-        }]
+                "description": "Pod is experiencing sustained high CPU usage above threshold",
+            },
+        }],
     },
     "memory_leak": {
         "receiver": "auto-remediation-webhook",
@@ -62,13 +181,13 @@ TEST_ALERTS = {
                 "alertname": "HighMemoryUsage",
                 "namespace": "default",
                 "severity": "warning",
-                "app": "auto-remediation-service"
+                "app": "auto-remediation-service",
             },
             "annotations": {
                 "summary": "Memory usage exceeds 80%",
-                "description": "Pod memory consumption has grown abnormally, possible memory leak"
-            }
-        }]
+                "description": "Pod memory consumption has grown abnormally, possible memory leak",
+            },
+        }],
     },
     "error_rate": {
         "receiver": "auto-remediation-webhook",
@@ -79,32 +198,282 @@ TEST_ALERTS = {
                 "alertname": "HighErrorRate",
                 "namespace": "default",
                 "severity": "critical",
-                "app": "auto-remediation-service"
+                "app": "auto-remediation-service",
             },
             "annotations": {
                 "summary": "HTTP error rate above 5%",
-                "description": "Service is returning elevated 5xx errors"
-            }
-        }]
-    }
+                "description": "Service is returning elevated 5xx errors",
+            },
+        }],
+    },
 }
 
-logger.info("[STARTUP] Auto-Remediation Webhook API Starting Up...")
-logger.info(f"[STARTUP] Startup Time: {datetime.now()}")
+# ── Security Configuration Validator ──────────────────────────────────────────
+def _validate_security_configuration():
+    """Validate environment configuration for security issues."""
+    import os
+    
+    warnings = []
+    errors = []
+    
+    # Check DATABASE_URL for default/weak credentials
+    database_url = os.getenv("DATABASE_URL", "")
+    if database_url:
+        # Check for default postgres credentials
+        if "postgres:postgres@" in database_url:
+            warnings.append("DATABASE_URL contains default PostgreSQL credentials (postgres/postgres)")
+        
+        # Check if password is too short
+        if "@" in database_url and ":" in database_url:
+            try:
+                # Extract password from postgresql://user:pass@host:port/db
+                cred_part = database_url.split("://")[1].split("@")[0]
+                if ":" in cred_part:
+                    password = cred_part.split(":")[1]
+                    if len(password) < 12:
+                        warnings.append(f"DATABASE_URL password is weak (length: {len(password)}, recommended: 16+)")
+            except:
+                pass  # Ignore parsing errors
+    
+    # Check OLLAMA configuration
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "")
+    if not ollama_url:
+        errors.append("OLLAMA_BASE_URL not configured")
+    elif ollama_url == "http://localhost:11434":
+        logger.info("[CONFIG] Using default Ollama URL (localhost:11434)")
+    
+    ollama_model = os.getenv("OLLAMA_MODEL", "")
+    if not ollama_model:
+        errors.append("OLLAMA_MODEL not configured")
+    
+    # Check if .env file exists
+    if not os.path.exists(".env") and not os.path.exists("webhook/.env"):
+        warnings.append("No .env file found. See .env.example for configuration template.")
+    
+    # Log warnings
+    if warnings:
+        logger.warning("[SECURITY] Configuration warnings detected:")
+        for warning in warnings:
+            logger.warning(f"  [!] {warning}")
+        logger.warning("[SECURITY] Review .env.example for security best practices")
+    
+    # Log errors and exit if critical
+    if errors:
+        logger.error("[SECURITY] Critical configuration errors detected:")
+        for error in errors:
+            logger.error(f"  [X] {error}")
+        raise ValueError(f"Critical configuration errors: {', '.join(errors)}")
+    
+    if not warnings and not errors:
+        logger.info("[SECURITY] [OK] Security configuration validation passed")
 
 
-class AlertPayload(BaseModel):
-    pass
+# ── Routes ────────────────────────────────────────────────────────────────────
+@app.get("/")
+async def root():
+    """Root endpoint - API information and available endpoints."""
+    return {
+        "service": "Auto-Remediation Webhook API",
+        "version": "1.0.0",
+        "status": "running",
+        "description": "Automated Kubernetes infrastructure remediation using LangGraph AI pipeline",
+        "endpoints": {
+            "GET /": "This endpoint - API information",
+            "GET /health": "Health check endpoint",
+            "GET /health/ready": "Kubernetes readiness probe",
+            "GET /health/live": "Kubernetes liveness probe",
+            "GET /metrics": "Prometheus metrics endpoint",
+            "GET /remediations": "View remediation history (last 50 events)",
+            "POST /alert": "Receive AlertManager webhook notifications",
+            "POST /test-alert": "Trigger test alert (body: {\"alert_type\": \"cpu_spike|memory_leak|error_rate\"})",
+        },
+        "features": [
+            "LangGraph dual-LLM pipeline (solver + safety validator)",
+            "Programmatic script pre-validation with regex deny-list",
+            "LLM timeout and retry logic (30s timeout, 3 attempts)",
+            "PostgreSQL audit trail for compliance",
+            "OpenTelemetry distributed tracing",
+        ],
+        "documentation": "See ROADMAP.md for feature status and implementation plan",
+    }
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "auto-infra-remediation", "timestamp": datetime.now().isoformat()}
+    """
+    Enhanced health check with dependency verification.
+    Checks: Ollama LLM, Kubernetes API, PostgreSQL database.
+    """
+    import os
+    import httpx
+    from kubernetes import client as k8s_client, config as k8s_config
+    
+    health_status = {
+        "status": "healthy",
+        "service": "auto-infra-remediation",
+        "timestamp": datetime.now().isoformat(),
+        "dependencies": {}
+    }
+    
+    all_healthy = True
+    
+    # Check Ollama LLM
+    try:
+        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        async with httpx.AsyncClient(timeout=5.0) as http_client:
+            response = await http_client.get(f"{ollama_url}/api/tags")
+            if response.status_code == 200:
+                health_status["dependencies"]["ollama"] = {
+                    "status": "healthy",
+                    "url": ollama_url,
+                    "models_available": len(response.json().get("models", []))
+                }
+            else:
+                health_status["dependencies"]["ollama"] = {
+                    "status": "unhealthy",
+                    "error": f"HTTP {response.status_code}"
+                }
+                all_healthy = False
+    except Exception as e:
+        health_status["dependencies"]["ollama"] = {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+        all_healthy = False
+    
+    # Check Kubernetes API (optional - skip if not available)
+    try:
+        from kubernetes import client as k8s_client, config as k8s_config
+        
+        # Quick check if kube config exists
+        import pathlib
+        kubeconfig_path = pathlib.Path.home() / ".kube" / "config"
+        
+        if kubeconfig_path.exists():
+            health_status["dependencies"]["kubernetes"] = {
+                "status": "available",
+                "note": "Config found, but not tested (use K8s context for full check)"
+            }
+        else:
+            health_status["dependencies"]["kubernetes"] = {
+                "status": "not_configured",
+                "note": "K8s access required for log fetching in production"
+            }
+    except Exception as e:
+        health_status["dependencies"]["kubernetes"] = {
+            "status": "not_configured",
+            "note": "K8s client not available"
+        }
+    
+    # Check PostgreSQL Database
+    database_url = os.getenv("DATABASE_URL", "")
+    if database_url:
+        try:
+            import asyncpg
+            conn = await asyncpg.connect(database_url, timeout=5)
+            await conn.execute("SELECT 1")
+            await conn.close()
+            health_status["dependencies"]["database"] = {
+                "status": "healthy",
+                "type": "postgresql"
+            }
+        except Exception as e:
+            health_status["dependencies"]["database"] = {
+                "status": "unhealthy",
+                "error": str(e)
+            }
+            all_healthy = False
+    else:
+        health_status["dependencies"]["database"] = {
+            "status": "disabled",
+            "note": "Using in-memory fallback"
+        }
+    
+    # Check Temporal workflow orchestration
+    try:
+        from temporal_client import check_temporal_health
+        temporal_health = await check_temporal_health()
+        health_status["dependencies"]["temporal"] = temporal_health
+        if temporal_health["status"] not in ["healthy", "unavailable"]:
+            # Don't mark as unhealthy if Temporal is just unavailable (fallback works)
+            all_healthy = False
+    except Exception as e:
+        health_status["dependencies"]["temporal"] = {
+            "status": "error",
+            "error": str(e)
+        }
+        # Temporal errors don't block service (we have fallback)
+    
+    # Check Vault secret management
+    try:
+        from vault_client import check_vault_health
+        vault_health = check_vault_health()
+        health_status["dependencies"]["vault"] = vault_health
+        if vault_health["status"] not in ["healthy", "unavailable"]:
+            # Don't mark as unhealthy if Vault is unavailable (env vars fallback)
+            pass  # Vault is optional for now
+    except Exception as e:
+        health_status["dependencies"]["vault"] = {
+            "status": "error",
+            "error": str(e)
+        }
+        # Vault errors don't block service (we have env var fallback)
+    
+    # Overall status
+    if not all_healthy:
+        health_status["status"] = "degraded"
+    
+    return health_status
+
+
+@app.get("/health/ready")
+async def readiness():
+    """
+    Readiness probe for Kubernetes.
+    Returns 200 if service can handle requests, 503 otherwise.
+    """
+    import os
+    import httpx
+    
+    # Critical dependency: Ollama must be available
+    try:
+        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.get(f"{ollama_url}/api/tags")
+            if response.status_code != 200:
+                return {"status": "not_ready", "reason": "Ollama unavailable"}, 503
+    except Exception as e:
+        return {"status": "not_ready", "reason": f"Ollama error: {str(e)}"}, 503
+    
+    return {"status": "ready", "timestamp": datetime.now().isoformat()}
+
+
+@app.get("/health/live")
+async def liveness():
+    """
+    Liveness probe for Kubernetes.
+    Returns 200 if service is alive, 503 if it should be restarted.
+    """
+    # Simple check - if we can respond, we're alive
+    return {"status": "alive", "timestamp": datetime.now().isoformat()}
+
+
+@app.get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+    Exposes remediation pipeline metrics for scraping.
+    """
+    from starlette.responses import Response
+    return Response(content=generate_latest(prom_registry), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/remediations")
 async def get_remediations():
-    """Return remediation history, newest first."""
+    """Return remediation history (PostgreSQL if configured, in-memory fallback)."""
+    db_rows = await fetch_audit_events(limit=50)
+    if db_rows is not None:
+        return db_rows
     return list(reversed(remediation_history))
 
 
@@ -114,36 +483,58 @@ async def trigger_test_alert(body: dict):
     alert_type = body.get("alert_type", "cpu_spike")
     payload = TEST_ALERTS.get(alert_type, TEST_ALERTS["cpu_spike"])
     logger.info(f"[TEST] Triggering test alert: {alert_type}")
-    task = asyncio.create_task(run_remediation_workflow(payload, alert_type=alert_type))
-    logger.info(f"[TEST] Workflow task created: {task}")
-    return {"status": "accepted", "alert_type": alert_type, "message": f"Test alert '{alert_type}' workflow started."}
+    asyncio.create_task(run_remediation_workflow(payload, alert_type=alert_type))
+    return {
+        "status": "accepted",
+        "alert_type": alert_type,
+        "message": f"Test alert '{alert_type}' workflow started.",
+    }
 
 
 @app.post("/alert")
 async def receive_alert(request: Request):
     start_time = datetime.now()
-    logger.info(f"[ALERT] Alert Received from Alertmanager at {start_time}")
+    logger.info(f"[ALERT] Alert received from Alertmanager at {start_time}")
 
     try:
         payload = await request.json()
-        logger.info(f"[PAYLOAD] Alert Payload Size: {len(str(payload))} characters")
-        task = asyncio.create_task(run_remediation_workflow(payload))
-        logger.info(f"[WORKFLOW] Remediation workflow task created: {task}")
-
-        processing_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"[TIMING] Alert processing time: {processing_time:.2f} seconds")
-
-        return {"status": "accepted", "message": "Remediation workflow started.", "timestamp": start_time.isoformat()}
+        asyncio.create_task(run_remediation_workflow(payload))
+        return {
+            "status": "accepted",
+            "message": "Remediation workflow started.",
+            "timestamp": start_time.isoformat(),
+        }
     except Exception as e:
         logger.error(f"[ERROR] Error processing alert: {str(e)}")
-        logger.exception("Full error traceback:")
         return {"status": "error", "message": f"Failed to process alert: {str(e)}"}
 
 
+# ── Workflow runner ───────────────────────────────────────────────────────────
 async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custom"):
     workflow_start = datetime.now()
     workflow_id = f"WF-{int(workflow_start.timestamp())}"
-    logger.info(f"[WORKFLOW {workflow_id}] Starting LangGraph Workflow at {workflow_start}")
+    logger.info(f"[WORKFLOW {workflow_id}] Starting remediation workflow")
+    
+    # Try Temporal first, fall back to direct execution
+    from temporal_client import start_remediation_workflow as start_temporal_workflow
+    temporal_result = await start_temporal_workflow(workflow_id, alert_payload, alert_type)
+    
+    if temporal_result.get("temporal_enabled") and temporal_result.get("status") == "accepted":
+        # Temporal is handling the workflow - just track metrics
+        logger.info(f"[WORKFLOW {workflow_id}] Delegated to Temporal (run_id: {temporal_result.get('run_id')})")
+        remediation_total.labels(alert_type=alert_type).inc()
+        active_workflows.inc()
+        
+        # Note: Workflow will complete asynchronously in Temporal worker
+        # Metrics and audit trail are handled by temporal_activities.py
+        return
+    
+    # Fallback: Direct LangGraph execution (original implementation)
+    logger.warning(f"[WORKFLOW {workflow_id}] Temporal unavailable, using direct execution")
+    
+    # Prometheus metrics: track start
+    remediation_total.labels(alert_type=alert_type).inc()
+    active_workflows.inc()
 
     record = {
         "id": workflow_id,
@@ -154,11 +545,16 @@ async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custo
         "script": "",
         "safety_approved": None,
         "safety_reasoning": "",
-        "execution_result": ""
+        "execution_result": "",
     }
+
+    # Write to in-memory history (always, as a cheap fallback)
     remediation_history.append(record)
     if len(remediation_history) > 50:
         remediation_history.pop(0)
+
+    # Write initial row to PostgreSQL
+    await insert_audit_event(record)
 
     try:
         initial_state = {"alert_payload": alert_payload}
@@ -168,7 +564,7 @@ async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custo
             step_count += 1
             node_name = list(event.keys())[0]
             node_state = event[node_name]
-            logger.info(f"[WORKFLOW {workflow_id}] Step {step_count} - Node: {node_name}")
+            logger.info(f"[WORKFLOW {workflow_id}] Step {step_count} — Node: {node_name}")
 
             if node_name == "solver" and "remediation_plan" in node_state:
                 plan = node_state["remediation_plan"]
@@ -178,21 +574,54 @@ async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custo
                 val = node_state["safety_validation"]
                 record["safety_approved"] = val.approved
                 record["safety_reasoning"] = val.reasoning
+                
+                # Prometheus metrics: track denials
+                if not val.approved:
+                    denial_reason = "pattern_match" if "prohibited command pattern" in val.reasoning else "llm_denied"
+                    safety_validation_denials.labels(
+                        alert_type=alert_type,
+                        reason=denial_reason
+                    ).inc()
+                    
             elif node_name == "execution" and "execution_result" in node_state:
                 record["execution_result"] = node_state["execution_result"]
 
         workflow_duration = (datetime.now() - workflow_start).total_seconds()
         record["status"] = "completed"
         record["duration_seconds"] = round(workflow_duration, 2)
-        logger.info(f"[SUCCESS] [WORKFLOW {workflow_id}] Complete in {workflow_duration:.2f}s ({step_count} steps)")
+        
+        # Prometheus metrics: record duration
+        remediation_duration_seconds.labels(
+            alert_type=alert_type,
+            status="completed"
+        ).observe(workflow_duration)
+        
+        logger.info(f"[SUCCESS] [WORKFLOW {workflow_id}] Complete in {workflow_duration:.2f}s")
 
     except Exception as e:
         logger.error(f"[ERROR] [WORKFLOW {workflow_id}] Workflow failed: {str(e)}")
-        logger.exception(f"[WORKFLOW {workflow_id}] Full workflow error traceback:")
         record["status"] = "failed"
         record["execution_result"] = f"Error: {str(e)}"
+        
+        # Prometheus metrics: track failure
+        execution_failures.labels(alert_type=alert_type).inc()
+        
+        # Record duration even for failed workflows
+        workflow_duration = (datetime.now() - workflow_start).total_seconds()
+        remediation_duration_seconds.labels(
+            alert_type=alert_type,
+            status="failed"
+        ).observe(workflow_duration)
+    
+    finally:
+        # Always decrement active workflows
+        active_workflows.dec()
+
+    # Persist final state to PostgreSQL
+    await update_audit_event(record)
 
 
 if __name__ == "__main__":
     logger.info("[SERVER] Starting FastAPI server on 0.0.0.0:8001")
-    uvicorn.run("api:app", host="0.0.0.0", port=8001, reload=True, log_level="info")
+    # Pass app instance directly to avoid double import and metric duplication
+    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")

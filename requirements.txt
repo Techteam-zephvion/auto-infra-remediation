@@ -1,15 +1,30 @@
+# AutoInfraRemediation — Webhook + LangGraph Agent
+# Python 3.10+
+# NOTE: This is the consolidated requirements file.
+# For webhook-specific dependencies, see webhook/requirements.txt
+
+# Web Framework
 fastapi==0.115.6
-uvicorn==0.34.0
+uvicorn[standard]==0.34.0
+python-multipart>=0.0.6
+
+# LangChain / LangGraph
 langchain==0.3.14
 langchain-core==0.3.29
 langgraph==0.2.61
+
+# LLM Provider (using Ollama)
 langchain-ollama>=0.2.0
+
+# Kubernetes Client
 kubernetes==31.0.0
+
+# Utilities
 pydantic==2.10.4
 python-dotenv==1.0.1
-tenacity>=8.0.0
 httpx>=0.26.0
-prometheus-client>=0.19.0
+requests>=2.31.0
+tenacity>=8.0.0
 
 # Database (PostgreSQL audit trail)
 asyncpg>=0.29.0
@@ -20,16 +35,3 @@ opentelemetry-api>=1.20.0
 opentelemetry-sdk>=1.20.0
 opentelemetry-exporter-otlp-proto-http>=1.20.0
 opentelemetry-instrumentation-fastapi>=0.41b0
-
-# Workflow Orchestration (Temporal)
-temporalio>=1.6.0
-
-# Secret Management (Vault)
-hvac>=2.1.0
-
-# Testing
-pytest>=8.0.0
-pytest-cov>=4.1.0
-pytest-asyncio>=0.23.0
-pytest-mock>=3.12.0
-httpx>=0.26.0  # Already included above, used for testing too

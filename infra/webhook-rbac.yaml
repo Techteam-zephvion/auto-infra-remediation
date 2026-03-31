@@ -1,0 +1,92 @@
+# ── Service Account ──────────────────────────────────────────────────────────
+# Dedicated service account for the auto-remediation webhook
+# Follows principle of least privilege - only what's needed for pod inspection
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auto-remediation-webhook
+  namespace: default
+  labels:
+    app: auto-remediation-webhook
+    component: webhook
+
+---
+# ── Role ─────────────────────────────────────────────────────────────────────
+# Restricted permissions - READ ONLY access to pods and logs
+# NO write operations, NO cluster-wide access, NO secrets access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: auto-remediation-webhook
+  namespace: default
+  labels:
+    app: auto-remediation-webhook
+    component: webhook
+rules:
+  # Read pods - needed to find pods by label selector
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  
+  # Read pod logs - needed for analysis
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  
+  # NO access to:
+  # - pods/exec (prevent command execution)
+  # - secrets (prevent credential access)
+  # - delete operations (prevent destructive actions)
+  # - deployments/services (prevent infrastructure changes)
+  
+---
+# ── RoleBinding ──────────────────────────────────────────────────────────────
+# Bind the Role to the ServiceAccount within the default namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auto-remediation-webhook
+  namespace: default
+  labels:
+    app: auto-remediation-webhook
+    component: webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: auto-remediation-webhook
+subjects:
+  - kind: ServiceAccount
+    name: auto-remediation-webhook
+    namespace: default
+
+---
+# ── Usage Instructions ───────────────────────────────────────────────────────
+# Apply this RBAC configuration before deploying the webhook:
+#
+#   kubectl apply -f infra/webhook-rbac.yaml
+#
+# Verify the service account is created:
+#
+#   kubectl get serviceaccount auto-remediation-webhook -n default
+#
+# Verify the role and binding:
+#
+#   kubectl get role auto-remediation-webhook -n default
+#   kubectl get rolebinding auto-remediation-webhook -n default
+#
+# Test permissions:
+#
+#   kubectl auth can-i get pods --as=system:serviceaccount:default:auto-remediation-webhook -n default
+#   kubectl auth can-i delete pods --as=system:serviceaccount:default:auto-remediation-webhook -n default
+#
+# Expected: First command returns "yes", second returns "no"
+#
+# ── Security Notes ───────────────────────────────────────────────────────────
+# 1. This Role is namespace-scoped (not ClusterRole) - webhook can only
+#    access pods in the 'default' namespace
+# 2. Read-only access prevents accidental or malicious destructive actions
+# 3. No exec permissions prevent arbitrary command execution in pods
+# 4. No secrets access prevents credential theft
+# 5. For multi-namespace support, create Role + RoleBinding per namespace
+#    or escalate to ClusterRole (not recommended for production)

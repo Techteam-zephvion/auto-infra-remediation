@@ -1,0 +1,189 @@
+# ── Deployment ───────────────────────────────────────────────────────────────
+# Auto-Remediation Webhook Deployment
+# Uses the RBAC service account created in webhook-rbac.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-remediation-webhook
+  namespace: default
+  labels:
+    app: auto-remediation-webhook
+    component: webhook
+    version: v1.0.0
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: auto-remediation-webhook
+  template:
+    metadata:
+      labels:
+        app: auto-remediation-webhook
+        component: webhook
+        version: v1.0.0
+    spec:
+      # Use the restricted service account (created via webhook-rbac.yaml)
+      serviceAccountName: auto-remediation-webhook
+      
+      # Security context - run as non-root
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      
+      containers:
+      - name: webhook
+        image: auto-remediation-webhook:latest  # TODO: Replace with actual image
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: http
+          containerPort: 8001
+          protocol: TCP
+        
+        # Environment variables
+        env:
+        - name: OLLAMA_BASE_URL
+          value: "http://ollama.default.svc.cluster.local:11434"
+        - name: OLLAMA_MODEL
+          value: "qwen2.5:3b"
+        - name: OLLAMA_TIMEOUT
+          value: "30"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: auto-remediation-secrets
+              key: database-url
+              optional: true
+        - name: OTEL_ENABLED
+          value: "true"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://jaeger-collector.monitoring.svc.cluster.local:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "auto-infra-remediation"
+        
+        # Resource limits for GKE Autopilot
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+            ephemeral-storage: "1Gi"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+            ephemeral-storage: "2Gi"
+        
+        # Liveness probe - restart if unresponsive
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Readiness probe - remove from load balancer if not ready
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Startup probe - allow slow startup (Ollama model loading)
+        startupProbe:
+          httpGet:
+            path: /health/live
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 12  # Allow up to 60s for startup (12 * 5s)
+        
+        # Container security
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # Needed for log files
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+
+---
+# ── Service ──────────────────────────────────────────────────────────────────
+# Expose the webhook internally within the cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: auto-remediation-webhook
+  namespace: default
+  labels:
+    app: auto-remediation-webhook
+    component: webhook
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8001
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: auto-remediation-webhook
+
+---
+# ── ConfigMap ────────────────────────────────────────────────────────────────
+# Non-sensitive configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auto-remediation-config
+  namespace: default
+  labels:
+    app: auto-remediation-webhook
+data:
+  OLLAMA_MODEL: "qwen2.5:3b"
+  OLLAMA_TIMEOUT: "30"
+  OTEL_SERVICE_NAME: "auto-infra-remediation"
+
+---
+# ── Usage Instructions ───────────────────────────────────────────────────────
+# Prerequisites:
+#   1. Apply RBAC first: kubectl apply -f webhook-rbac.yaml
+#   2. Create secret: kubectl create secret generic auto-remediation-secrets \
+#        --from-literal=database-url='postgresql://user:pass@host:5432/db'
+#   3. Build and push Docker image (update image field above)
+#
+# Deploy:
+#   kubectl apply -f webhook-deployment.yaml
+#
+# Verify:
+#   kubectl get deployment auto-remediation-webhook -n default
+#   kubectl get pods -l app=auto-remediation-webhook -n default
+#   kubectl logs -l app=auto-remediation-webhook -n default --tail=50
+#
+# Test health endpoints:
+#   kubectl port-forward svc/auto-remediation-webhook 8001:8001 -n default
+#   curl http://localhost:8001/health
+#   curl http://localhost:8001/health/ready
+#   curl http://localhost:8001/health/live
+#
+# Check AlertManager configuration to point to:
+#   http://auto-remediation-webhook.default.svc.cluster.local:8001/alert

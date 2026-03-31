@@ -1,0 +1,1 @@
+{"alert_type":"cpu_spike","pod_name":"test-pod","namespace":"default","severity":"critical"}

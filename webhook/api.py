@@ -81,6 +81,27 @@ active_workflows = _get_metric(
     'Number of currently active remediation workflows'
 )
 
+# LLM Cache metrics
+llm_cache_hits = _get_metric(
+    Counter,
+    'llm_cache_hits_total',
+    'Number of LLM cache hits',
+    ['alert_type']
+)
+
+llm_cache_misses = _get_metric(
+    Counter,
+    'llm_cache_misses_total',
+    'Number of LLM cache misses',
+    ['alert_type']
+)
+
+llm_cache_errors = _get_metric(
+    Counter,
+    'llm_cache_errors_total',
+    'Number of LLM cache errors'
+)
+
 llm_invocation_failures = _get_metric(
     Counter,
     'llm_invocation_failures_total',
@@ -421,6 +442,29 @@ async def health():
         }
         # Vault errors don't block service (we have env var fallback)
     
+    # Check Redis LLM Cache
+    try:
+        from cache import get_llm_cache
+        llm_cache = get_llm_cache()
+        if llm_cache.health_check():
+            cache_stats = llm_cache.get_stats()
+            health_status["dependencies"]["redis_cache"] = {
+                "status": "healthy",
+                "hit_rate_percent": cache_stats.get("hit_rate_percent", 0),
+                "total_requests": cache_stats.get("total_requests", 0)
+            }
+        else:
+            health_status["dependencies"]["redis_cache"] = {
+                "status": "unavailable",
+                "note": "Cache disabled or Redis not connected"
+            }
+    except Exception as e:
+        health_status["dependencies"]["redis_cache"] = {
+            "status": "error",
+            "error": str(e)
+        }
+        # Cache errors don't block service (LLM calls still work)
+    
     # Overall status
     if not all_healthy:
         health_status["status"] = "degraded"
@@ -468,6 +512,39 @@ async def metrics():
     """
     from starlette.responses import Response
     return Response(content=generate_latest(prom_registry), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/cache/stats")
+async def get_cache_stats():
+    """
+    LLM cache statistics endpoint.
+    Returns cache hit/miss rates, memory usage, and performance metrics.
+    """
+    from cache import get_llm_cache
+    llm_cache = get_llm_cache()
+    return llm_cache.get_stats()
+
+
+@app.delete("/cache")
+async def invalidate_cache(pattern: str = None):
+    """
+    Invalidate LLM cache entries.
+    
+    Query params:
+        pattern: Redis key pattern to invalidate (default: all llm:response:*)
+    
+    Example:
+        DELETE /cache              - Invalidates all cache
+        DELETE /cache?pattern=llm:response:cpu_spike:*  - Invalidates cpu_spike alerts only
+    """
+    from cache import get_llm_cache
+    llm_cache = get_llm_cache()
+    deleted = llm_cache.invalidate_cache(pattern)
+    return {
+        "status": "success",
+        "deleted_keys": deleted,
+        "pattern": pattern or "llm:response:*"
+    }
 
 
 @app.get("/remediations")

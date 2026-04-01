@@ -70,5 +70,19 @@ services:
       retries: 3
     command: server -dev -dev-root-token-id=dev-root-token
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"     # Redis
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redisdata:/data
+
 volumes:
   pgdata:
+  redisdata:

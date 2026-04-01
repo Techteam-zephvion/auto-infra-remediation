@@ -16,6 +16,7 @@ from opentelemetry import trace
 
 from k8s_client import get_pod_logs, get_pods_with_labels, execute_remediation, execute_remediation_sandboxed
 from tracing import get_tracer
+from cache import get_llm_cache
 
 load_dotenv()
 
@@ -196,6 +197,41 @@ def solver_node(state: GraphState) -> GraphState:
             span.set_attribute("llm.model", OLLAMA_MODEL)
             span.set_attribute("input.log_chars", len(logs))
 
+            # Extract alert context for caching
+            alerts = alert.get("alerts", [])
+            labels = alerts[0].get("labels", {}) if alerts else {}
+            alert_type = labels.get("alertname", "unknown")
+            namespace = labels.get("namespace", "default")
+            
+            cache_context = {
+                "alert_type": alert_type,
+                "namespace": namespace
+            }
+
+            # Check cache first
+            llm_cache = get_llm_cache()
+            cached_response = llm_cache.get_cached_response(
+                alert_type=alert_type,
+                logs=logs,
+                context=cache_context
+            )
+            
+            if cached_response:
+                logger.info(f"[CACHE] Using cached LLM response for {alert_type}")
+                span.set_attribute("cache.hit", True)
+                
+                # Reconstruct RemediationPlan from cached data
+                plan = RemediationPlan(**cached_response)
+                span.set_attribute("plan.is_safe", plan.is_safe)
+                span.set_attribute("plan.script_chars", len(plan.script))
+                
+                node_duration = (datetime.now() - node_start).total_seconds()
+                span.set_attribute("node.duration_seconds", node_duration)
+                logger.info(f"[SUCCESS] [NODE] Solver Engine completed (cached) in {node_duration:.2f} seconds")
+                return {"remediation_plan": plan}
+            
+            # Cache miss - call LLM
+            span.set_attribute("cache.hit", False)
             logger.info(f"[AI] Initializing Ollama model: {OLLAMA_MODEL}...")
             # Don't use .with_structured_output() to avoid premature Pydantic validation
             llm = ChatOllama(
@@ -268,6 +304,19 @@ def solver_node(state: GraphState) -> GraphState:
             span.set_attribute("plan.script_chars", len(plan.script))
             logger.info(f"[ANALYSIS] {plan.analysis[:200]}{'...' if len(plan.analysis) > 200 else ''}")
             logger.info(f"[SAFETY] Initial self-assessment: {plan.is_safe}")
+            
+            # Cache the LLM response for future use
+            cache_data = {
+                "analysis": plan.analysis,
+                "script": plan.script,
+                "is_safe": plan.is_safe
+            }
+            llm_cache.set_cached_response(
+                alert_type=alert_type,
+                logs=logs,
+                response=cache_data,
+                context=cache_context
+            )
 
             node_duration = (datetime.now() - node_start).total_seconds()
             span.set_attribute("node.duration_seconds", node_duration)

@@ -1,0 +1,112 @@
+# Production AutoInfraRemediation
+# Minimal services for production deployment
+
+version: '3.8'
+
+services:
+  # Essential: PostgreSQL for audit trail
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-autoremediation}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-auto_remediation}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-autoremediation}"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - remediation
+
+  # Essential: Redis for LLM response caching 
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - remediation
+
+  # Essential: Temporal for workflow orchestration
+  temporal:
+    image: temporalio/auto-setup:1.22.4
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-autoremediation}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-secure_password_change_me}
+      - POSTGRES_SEEDS=db
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal:7233", "workflow", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - remediation
+
+  # Main application: Combined API + Worker
+  auto-remediation:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    environment:
+      # Database
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-autoremediation}:${POSTGRES_PASSWORD:-secure_password_change_me}@db:5432/${POSTGRES_DB:-auto_remediation}
+      
+      # Temporal
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=auto-remediation-queue
+      - TEMPORAL_ENABLED=true
+      
+      # Redis Cache
+      - REDIS_URL=redis://redis:6379/0
+      
+      # LLM Configuration
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - OLLAMA_TIMEOUT=30
+      
+      # Observability
+      - OTEL_ENABLED=false
+      - PROMETHEUS_ENABLED=true
+      
+      # Security
+      - ENVIRONMENT=production
+    ports:
+      - "${API_PORT:-8001}:8001"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - remediation
+    # Mount kubeconfig for K8s access
+    volumes:
+      - ${KUBECONFIG_PATH:-~/.kube/config}:/root/.kube/config:ro
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  remediation:
+    driver: bridge

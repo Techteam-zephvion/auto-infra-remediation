@@ -15,7 +15,7 @@ class TestE2EWebhookFlow:
     @pytest.mark.asyncio
     async def test_full_webhook_to_remediation_flow(self, sample_alert_payload):
         """Test complete flow: webhook → parse → analyze → validate → execute"""
-        from api import app
+        from service.webhook.api import app
         
         # Mock all external dependencies
         with patch('k8s_client.get_pods_with_labels') as mock_pods:
@@ -60,7 +60,7 @@ class TestE2EWebhookFlow:
     @pytest.mark.asyncio
     async def test_dangerous_script_blocked_e2e(self, sample_alert_payload):
         """Test that dangerous scripts are blocked end-to-end"""
-        from api import app
+        from service.webhook.api import app
         
         with patch('k8s_client.get_pods_with_labels') as mock_pods:
             with patch('k8s_client.get_pod_logs') as mock_logs:
@@ -105,7 +105,7 @@ class TestE2ETemporalIntegration:
     @pytest.mark.asyncio
     async def test_temporal_workflow_execution(self, sample_alert_payload):
         """Test workflow execution through Temporal"""
-        from api import app
+        from service.webhook.api import app
         
         with patch('temporal_client.get_temporal_client') as mock_temporal:
             with patch('temporal_client.start_remediation_workflow') as mock_start:
@@ -131,7 +131,7 @@ class TestE2ETemporalIntegration:
     @pytest.mark.asyncio
     async def test_temporal_unavailable_fallback(self, sample_alert_payload):
         """Test fallback to direct execution when Temporal unavailable"""
-        from api import app
+        from service.webhook.api import app
         
         with patch('temporal_client.get_temporal_client', return_value=None):
             with patch('graph.build_graph') as mock_graph:
@@ -160,7 +160,7 @@ class TestE2EErrorRecovery:
     @pytest.mark.asyncio
     async def test_llm_timeout_recovery(self, sample_alert_payload):
         """Test recovery from LLM timeout"""
-        from api import app
+        from service.webhook.api import app
         
         with patch('k8s_client.get_pods_with_labels', return_value=[]):
             with patch('graph.ChatOllama') as mock_ollama:
@@ -187,7 +187,7 @@ class TestE2EErrorRecovery:
     @pytest.mark.asyncio
     async def test_database_unavailable_fallback(self, sample_alert_payload):
         """Test fallback when database is unavailable"""
-        from api import app
+        from service.webhook.api import app
         
         with patch('database.insert_audit_event', side_effect=Exception("DB down")):
             with patch('database.update_audit_event', side_effect=Exception("DB down")):
@@ -217,7 +217,7 @@ class TestE2EMultipleAlerts:
     async def test_concurrent_alert_processing(self, sample_alert_payload):
         """Test processing multiple alerts concurrently"""
         import asyncio
-        from api import app
+        from service.webhook.api import app
         
         with patch('k8s_client.get_pods_with_labels', return_value=[]):
             with patch('graph.ChatOllama') as mock_ollama:
@@ -253,7 +253,7 @@ class TestE2EHealthAndMetrics:
     @pytest.mark.asyncio
     async def test_health_endpoint_all_services(self):
         """Test health endpoint shows all service statuses"""
-        from api import app
+        from service.webhook.api import app
         
         with patch('httpx.AsyncClient.get') as mock_http:
             with patch('temporal_client.check_temporal_health') as mock_temporal:
@@ -281,7 +281,7 @@ class TestE2EHealthAndMetrics:
     @pytest.mark.asyncio
     async def test_metrics_endpoint(self):
         """Test Prometheus metrics endpoint"""
-        from api import app
+        from service.webhook.api import app
         
         async with AsyncClient(app=app, base_url="http://test") as client:
             response = await client.get("/metrics")
@@ -299,7 +299,7 @@ class TestE2ERealWorldScenarios:
     @pytest.mark.asyncio
     async def test_memory_leak_scenario(self):
         """Test memory leak detection and remediation"""
-        from api import app
+        from service.webhook.api import app
         
         alert = {
             "alerts": [{
@@ -342,7 +342,7 @@ class TestE2ERealWorldScenarios:
     @pytest.mark.asyncio
     async def test_cpu_spike_scenario(self):
         """Test CPU spike detection and remediation"""
-        from api import app
+        from service.webhook.api import app
         
         alert = {
             "alerts": [{

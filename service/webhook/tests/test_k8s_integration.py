@@ -15,7 +15,7 @@ class TestK8sClientIntegration:
         """Test that K8s client initializes correctly"""
         with patch('k8s_client.config.load_incluster_config', side_effect=Exception("Not in cluster")):
             with patch('k8s_client.config.load_kube_config'):
-                from k8s_client import get_k8s_client
+                from service.webhook.k8s_client import get_k8s_client
                 
                 client = get_k8s_client()
                 assert client is not None
@@ -23,7 +23,7 @@ class TestK8sClientIntegration:
     @pytest.mark.integration
     def test_get_pods_with_labels_success(self):
         """Test successful pod listing with label selector"""
-        from k8s_client import get_pods_with_labels
+        from service.webhook.k8s_client import get_pods_with_labels
         
         mock_pod_list = Mock()
         mock_pod = Mock()
@@ -45,7 +45,7 @@ class TestK8sClientIntegration:
     @pytest.mark.integration
     def test_get_pods_handles_api_exception(self):
         """Test error handling when K8s API returns error"""
-        from k8s_client import get_pods_with_labels
+        from service.webhook.k8s_client import get_pods_with_labels
         
         with patch('k8s_client.client.CoreV1Api') as mock_api:
             mock_api.return_value.list_namespaced_pod.side_effect = ApiException(
@@ -64,7 +64,7 @@ class TestK8sClientIntegration:
     @pytest.mark.integration
     def test_get_pod_logs_success(self):
         """Test successful pod log retrieval"""
-        from k8s_client import get_pod_logs
+        from service.webhook.k8s_client import get_pod_logs
         
         mock_logs = "2026-03-31 10:15:23 INFO Application started\n2026-03-31 10:15:24 ERROR Connection failed"
         
@@ -84,7 +84,7 @@ class TestK8sClientIntegration:
     @pytest.mark.integration
     def test_get_pod_logs_handles_not_found(self):
         """Test handling of non-existent pod"""
-        from k8s_client import get_pod_logs
+        from service.webhook.k8s_client import get_pod_logs
         
         with patch('k8s_client.client.CoreV1Api') as mock_api:
             mock_api.return_value.read_namespaced_pod_log.side_effect = ApiException(
@@ -103,7 +103,7 @@ class TestK8sClientIntegration:
     @pytest.mark.integration
     def test_get_pod_logs_with_tail_limit(self):
         """Test log retrieval with tail lines limit"""
-        from k8s_client import get_pod_logs
+        from service.webhook.k8s_client import get_pod_logs
         
         with patch('k8s_client.client.CoreV1Api') as mock_api:
             mock_api.return_value.read_namespaced_pod_log.return_value = "logs"
@@ -126,7 +126,7 @@ class TestLogParserIntegration:
     @pytest.mark.integration
     def test_log_parser_fetches_from_k8s(self, sample_alert_payload):
         """Test that log parser integrates with K8s client"""
-        from graph import graph_log_parser
+        from service.webhook.graph import graph_log_parser
         
         mock_logs = "Application error: Out of memory"
         
@@ -145,7 +145,7 @@ class TestLogParserIntegration:
     @pytest.mark.integration
     def test_log_parser_handles_no_pods_found(self, sample_alert_payload):
         """Test log parser when no pods match the selector"""
-        from graph import graph_log_parser
+        from service.webhook.graph import graph_log_parser
         
         with patch('k8s_client.get_pods_with_labels', return_value=[]):
             result = graph_log_parser({"alert_payload": sample_alert_payload})
@@ -158,7 +158,7 @@ class TestLogParserIntegration:
     @pytest.mark.integration
     def test_log_parser_handles_k8s_connection_error(self, sample_alert_payload):
         """Test log parser when K8s connection fails"""
-        from graph import graph_log_parser
+        from service.webhook.graph import graph_log_parser
         
         with patch('k8s_client.get_pods_with_labels', side_effect=Exception("Connection refused")):
             result = graph_log_parser({"alert_payload": sample_alert_payload})
@@ -176,7 +176,7 @@ class TestEndToEndWithMockK8s:
     def test_full_pipeline_with_k8s_logs(self, mock_ollama, sample_alert_payload, sample_remediation_plan):
         """Test complete pipeline from alert to remediation with K8s integration"""
         import json
-        from graph import build_graph
+        from service.webhook.graph import build_graph
         
         # Mock K8s responses
         mock_pod = Mock()
@@ -213,7 +213,7 @@ class TestK8sErrorConditions:
     @pytest.mark.integration
     def test_handle_pod_not_ready(self):
         """Test handling of pods that are not ready"""
-        from k8s_client import get_pod_logs
+        from service.webhook.k8s_client import get_pod_logs
         
         with patch('k8s_client.client.CoreV1Api') as mock_api:
             mock_api.return_value.read_namespaced_pod_log.side_effect = ApiException(
@@ -227,7 +227,7 @@ class TestK8sErrorConditions:
     @pytest.mark.integration
     def test_handle_namespace_not_found(self):
         """Test handling of non-existent namespace"""
-        from k8s_client import get_pods_with_labels
+        from service.webhook.k8s_client import get_pods_with_labels
         
         with patch('k8s_client.client.CoreV1Api') as mock_api:
             mock_api.return_value.list_namespaced_pod.side_effect = ApiException(
@@ -241,7 +241,7 @@ class TestK8sErrorConditions:
     @pytest.mark.integration
     def test_handle_permission_denied(self):
         """Test handling of insufficient permissions"""
-        from k8s_client import get_pods_with_labels
+        from service.webhook.k8s_client import get_pods_with_labels
         
         with patch('k8s_client.client.CoreV1Api') as mock_api:
             mock_api.return_value.list_namespaced_pod.side_effect = ApiException(
@@ -255,7 +255,7 @@ class TestK8sErrorConditions:
     @pytest.mark.integration
     def test_handle_timeout(self):
         """Test handling of K8s API timeout"""
-        from k8s_client import get_pod_logs
+        from service.webhook.k8s_client import get_pod_logs
         
         with patch('k8s_client.client.CoreV1Api') as mock_api:
             mock_api.return_value.read_namespaced_pod_log.side_effect = TimeoutError("Request timed out")
@@ -270,7 +270,7 @@ class TestMultiplePods:
     @pytest.mark.integration
     def test_multiple_pods_matching_selector(self):
         """Test when multiple pods match the label selector"""
-        from k8s_client import get_pods_with_labels
+        from service.webhook.k8s_client import get_pods_with_labels
         
         mock_pod_list = Mock()
         pods = []
@@ -292,7 +292,7 @@ class TestMultiplePods:
     @pytest.mark.integration
     def test_log_parser_with_multiple_pods(self, sample_alert_payload):
         """Test log parser selects correct pod from multiple matches"""
-        from graph import graph_log_parser
+        from service.webhook.graph import graph_log_parser
         
         pods = []
         for i in range(3):

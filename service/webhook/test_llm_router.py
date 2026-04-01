@@ -36,7 +36,7 @@ def test_router_initialization():
     print("TEST 1: LLM Router Initialization")
     print("="*70)
     
-    from llm_router import get_llm_router
+    from service.webhook.llm_router import get_llm_router
     router = get_llm_router()
     
     print(f"Router initialized: {router is not None}")
@@ -53,7 +53,7 @@ def test_basic_invocation():
     print("TEST 2: Basic LLM Invocation")
     print("="*70)
     
-    from llm_router import get_llm_router
+    from service.webhook.llm_router import get_llm_router
     router = get_llm_router()
     router.reset_metrics()
     
@@ -95,7 +95,7 @@ def test_complex_prompt():
     print("TEST 3: Complex Remediation Prompt")
     print("="*70)
     
-    from llm_router import get_llm_router
+    from service.webhook.llm_router import get_llm_router
     router = get_llm_router()
     router.reset_metrics()
     
@@ -154,7 +154,7 @@ def test_circuit_breaker():
     print("TEST 4: Circuit Breaker Status")
     print("="*70)
     
-    from llm_router import get_llm_router
+    from service.webhook.llm_router import get_llm_router
     router = get_llm_router()
     
     metrics = router.get_metrics()
@@ -182,7 +182,7 @@ def test_router_metrics():
     print("TEST 5: Metrics Tracking")
     print("="*70)
     
-    from llm_router import get_llm_router
+    from service.webhook.llm_router import get_llm_router
     router = get_llm_router()
     
     metrics = router.get_metrics()

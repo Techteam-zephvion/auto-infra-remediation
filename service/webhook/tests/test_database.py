@@ -19,7 +19,7 @@ class TestDatabaseSetup:
     async def test_setup_audit_table_creates_table(self):
         """Test that setup_audit_table creates the audit_events table"""
         with patch('asyncpg.connect') as mock_connect:
-            from database import setup_audit_table
+            from service.webhook.database import setup_audit_table
             
             mock_conn = AsyncMock()
             mock_connect.return_value.__aenter__.return_value = mock_conn
@@ -33,7 +33,7 @@ class TestDatabaseSetup:
     @pytest.mark.asyncio
     async def test_setup_audit_table_handles_no_database_url(self):
         """Test graceful handling when DATABASE_URL is not set"""
-        from database import setup_audit_table
+        from service.webhook.database import setup_audit_table
         
         with patch('database.os.getenv', return_value=""):
             await setup_audit_table()
@@ -47,7 +47,7 @@ class TestAuditEventInsertion:
     @pytest.mark.asyncio
     async def test_insert_audit_event_success(self):
         """Test successful audit event insertion"""
-        from database import insert_audit_event
+        from service.webhook.database import insert_audit_event
         
         with patch('database.asyncpg.connect') as mock_connect:
             mock_conn = AsyncMock()
@@ -70,7 +70,7 @@ class TestAuditEventInsertion:
     @pytest.mark.asyncio
     async def test_insert_audit_event_handles_connection_error(self):
         """Test error handling when database connection fails"""
-        from database import insert_audit_event
+        from service.webhook.database import insert_audit_event
         
         with patch('database.asyncpg.connect', side_effect=Exception("Connection failed")):
             # Should not raise exception, just log error
@@ -84,7 +84,7 @@ class TestAuditEventInsertion:
     @pytest.mark.asyncio
     async def test_insert_audit_event_with_all_fields(self):
         """Test insertion with all possible fields"""
-        from database import insert_audit_event
+        from service.webhook.database import insert_audit_event
         
         with patch('database.asyncpg.connect') as mock_connect:
             mock_conn = AsyncMock()
@@ -113,7 +113,7 @@ class TestAuditEventUpdate:
     @pytest.mark.asyncio
     async def test_update_audit_event_success(self):
         """Test successful audit event update"""
-        from database import update_audit_event
+        from service.webhook.database import update_audit_event
         
         with patch('database.asyncpg.connect') as mock_connect:
             mock_conn = AsyncMock()
@@ -138,7 +138,7 @@ class TestAuditEventUpdate:
     @pytest.mark.asyncio
     async def test_update_audit_event_partial_fields(self):
         """Test updating only specific fields"""
-        from database import update_audit_event
+        from service.webhook.database import update_audit_event
         
         with patch('database.asyncpg.connect') as mock_connect:
             mock_conn = AsyncMock()
@@ -160,7 +160,7 @@ class TestAuditEventFetch:
     @pytest.mark.asyncio
     async def test_fetch_audit_events_returns_list(self):
         """Test fetching audit events returns list of dicts"""
-        from database import fetch_audit_events
+        from service.webhook.database import fetch_audit_events
         
         mock_records = [
             {
@@ -198,7 +198,7 @@ class TestAuditEventFetch:
     @pytest.mark.asyncio
     async def test_fetch_audit_events_with_filters(self):
         """Test fetching with filters applied"""
-        from database import fetch_audit_events
+        from service.webhook.database import fetch_audit_events
         
         with patch('database.asyncpg.connect') as mock_connect:
             mock_conn = AsyncMock()
@@ -218,7 +218,7 @@ class TestAuditEventFetch:
     @pytest.mark.asyncio
     async def test_fetch_audit_events_handles_no_database(self):
         """Test fallback when database is not configured"""
-        from database import fetch_audit_events
+        from service.webhook.database import fetch_audit_events
         
         with patch('database.os.getenv', return_value=""):
             events = await fetch_audit_events()
@@ -232,7 +232,7 @@ class TestConnectionHandling:
     @pytest.mark.asyncio
     async def test_connection_properly_closed(self):
         """Test that database connections are properly closed"""
-        from database import insert_audit_event
+        from service.webhook.database import insert_audit_event
         
         with patch('database.asyncpg.connect') as mock_connect:
             mock_conn = AsyncMock()
@@ -251,7 +251,7 @@ class TestConnectionHandling:
     @pytest.mark.asyncio
     async def test_connection_error_handled_gracefully(self):
         """Test that connection errors don't crash the application"""
-        from database import insert_audit_event
+        from service.webhook.database import insert_audit_event
         
         with patch('database.asyncpg.connect', side_effect=ConnectionError("DB down")):
             # Should not raise exception
@@ -266,7 +266,7 @@ class TestDataValidation:
     @pytest.mark.asyncio
     async def test_insert_with_long_text_fields(self):
         """Test inserting events with large text fields"""
-        from database import insert_audit_event
+        from service.webhook.database import insert_audit_event
         
         with patch('database.asyncpg.connect') as mock_connect:
             mock_conn = AsyncMock()
@@ -288,7 +288,7 @@ class TestDataValidation:
     @pytest.mark.asyncio
     async def test_insert_with_json_payload(self):
         """Test inserting complex JSON payloads"""
-        from database import insert_audit_event
+        from service.webhook.database import insert_audit_event
         
         with patch('database.asyncpg.connect') as mock_connect:
             mock_conn = AsyncMock()
@@ -320,7 +320,7 @@ class TestConcurrency:
     async def test_concurrent_inserts(self):
         """Test multiple concurrent insert operations"""
         import asyncio
-        from database import insert_audit_event
+        from service.webhook.database import insert_audit_event
         
         with patch('database.asyncpg.connect') as mock_connect:
             mock_conn = AsyncMock()

@@ -13,7 +13,7 @@ Usage:
 
 import asyncio
 import logging
-from cache import get_llm_cache
+from service.webhook.cache import get_llm_cache
 
 # Configure logging
 logging.basicConfig(

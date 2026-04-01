@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auto-remediation-sa
+  namespace: auto-remediation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: auto-remediation-role
+rules:
+# Read access to pods, services, deployments for analysis
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+# Job creation for remediation execution
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch", "delete"]
+# Pod logs access for analysis
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+# NetworkPolicy creation for sandboxing
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["create", "get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: auto-remediation-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: auto-remediation-role
+subjects:
+- kind: ServiceAccount
+  name: auto-remediation-sa
+  namespace: auto-remediation

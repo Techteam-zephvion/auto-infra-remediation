@@ -88,7 +88,7 @@ async def start_remediation_workflow(
         }
     
     try:
-        from temporal_workflows import RemediationWorkflow
+        from service.webhook.temporal_workflows import RemediationWorkflow
         
         workflow_input = {
             "workflow_id": workflow_id,
@@ -141,7 +141,7 @@ async def get_workflow_status(workflow_id: str) -> Optional[Dict[str, Any]]:
         return None
     
     try:
-        from temporal_workflows import RemediationWorkflow
+        from service.webhook.temporal_workflows import RemediationWorkflow
         
         handle = client.get_workflow_handle(workflow_id)
         result = await handle.result()
@@ -175,7 +175,7 @@ async def check_temporal_health() -> Dict[str, Any]:
             }
         
         # Try to execute a simple health check workflow
-        from temporal_workflows import HealthCheckWorkflow
+        from service.webhook.temporal_workflows import HealthCheckWorkflow
         
         handle = await client.start_workflow(
             HealthCheckWorkflow.run,

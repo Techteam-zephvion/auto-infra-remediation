@@ -13,12 +13,12 @@ from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from opentelemetry import trace
 
-from k8s_client import get_pod_logs, get_pods_with_labels, execute_remediation, execute_remediation_sandboxed
-from tracing import get_tracer
-from cache import get_llm_cache
-from llm_router import get_llm_router
-from knowledge_base import get_knowledge_base, format_rag_context
-from embeddings import get_embedding_generator, create_query_text
+from service.webhook.k8s_client import get_pod_logs, get_pods_with_labels, execute_remediation, execute_remediation_sandboxed
+from service.webhook.tracing import get_tracer
+from service.webhook.cache import get_llm_cache
+from service.webhook.llm_router import get_llm_router
+from service.webhook.knowledge_base import get_knowledge_base, format_rag_context
+from service.webhook.embeddings import get_embedding_generator, create_query_text
 
 load_dotenv()
 

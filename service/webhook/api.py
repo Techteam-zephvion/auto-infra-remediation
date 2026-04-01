@@ -9,14 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # ── Tracing must be initialised before graph import ───────────────────────────
-from tracing import setup_tracing
+from service.webhook.tracing import setup_tracing
 setup_tracing()
 
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from graph import build_graph
-from database import setup_audit_table, insert_audit_event, update_audit_event, fetch_audit_events
-from alert_tuning import get_alert_tuning
-from notifications import get_notification_service
+from service.webhook.graph import build_graph
+from service.webhook.database import setup_audit_table, insert_audit_event, update_audit_event, fetch_audit_events
+from service.webhook.alert_tuning import get_alert_tuning
+from service.webhook.notifications import get_notification_service
 
 # ── Prometheus Metrics ────────────────────────────────────────────────────────
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST, CollectorRegistry, REGISTRY
@@ -204,7 +204,7 @@ async def lifespan(app: FastAPI):
     await setup_audit_table()
     
     # Initialize Vault client
-    from vault_client import get_vault_client, initialize_vault_secrets
+    from service.webhook.vault_client import get_vault_client, initialize_vault_secrets
     vault_client = get_vault_client()
     if vault_client:
         logger.info("[STARTUP] Vault client connected successfully")
@@ -214,7 +214,7 @@ async def lifespan(app: FastAPI):
         logger.warning("[STARTUP] Vault unavailable - using environment variables")
     
     # Initialize Temporal client
-    from temporal_client import get_temporal_client
+    from service.webhook.temporal_client import get_temporal_client
     temporal_client = await get_temporal_client()
     if temporal_client:
         logger.info("[STARTUP] Temporal client connected successfully")
@@ -227,7 +227,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"[SHUTDOWN] Auto-Remediation Webhook API shutting down at {datetime.now()}")
     
     # Close Temporal client
-    from temporal_client import close_temporal_client
+    from service.webhook.temporal_client import close_temporal_client
     await close_temporal_client()
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -488,7 +488,7 @@ async def health():
     
     # Check Temporal workflow orchestration
     try:
-        from temporal_client import check_temporal_health
+        from service.webhook.temporal_client import check_temporal_health
         temporal_health = await check_temporal_health()
         health_status["dependencies"]["temporal"] = temporal_health
         if temporal_health["status"] not in ["healthy", "unavailable"]:
@@ -503,7 +503,7 @@ async def health():
     
     # Check Vault secret management
     try:
-        from vault_client import check_vault_health
+        from service.webhook.vault_client import check_vault_health
         vault_health = check_vault_health()
         health_status["dependencies"]["vault"] = vault_health
         if vault_health["status"] not in ["healthy", "unavailable"]:
@@ -518,7 +518,7 @@ async def health():
     
     # Check Redis LLM Cache
     try:
-        from cache import get_llm_cache
+        from service.webhook.cache import get_llm_cache
         llm_cache = get_llm_cache()
         if llm_cache.health_check():
             cache_stats = llm_cache.get_stats()
@@ -594,7 +594,7 @@ async def get_cache_stats():
     LLM cache statistics endpoint.
     Returns cache hit/miss rates, memory usage, and performance metrics.
     """
-    from cache import get_llm_cache
+    from service.webhook.cache import get_llm_cache
     llm_cache = get_llm_cache()
     return llm_cache.get_stats()
 
@@ -611,7 +611,7 @@ async def invalidate_cache(pattern: str = None):
         DELETE /cache              - Invalidates all cache
         DELETE /cache?pattern=llm:response:cpu_spike:*  - Invalidates cpu_spike alerts only
     """
-    from cache import get_llm_cache
+    from service.webhook.cache import get_llm_cache
     llm_cache = get_llm_cache()
     deleted = llm_cache.invalidate_cache(pattern)
     return {
@@ -627,7 +627,7 @@ async def get_llm_router_stats():
     LLM router statistics endpoint.
     Returns model usage, fallback rates, cost tracking, and circuit breaker status.
     """
-    from llm_router import get_llm_router
+    from service.webhook.llm_router import get_llm_router
     llm_router = get_llm_router()
     return llm_router.get_metrics()
 
@@ -638,7 +638,7 @@ async def reset_circuit_breakers():
     Force reset all circuit breakers (for debugging/testing).
     Use with caution - this bypasses the circuit breaker failure protection.
     """
-    from llm_router import get_llm_router
+    from service.webhook.llm_router import get_llm_router
     llm_router = get_llm_router()
     llm_router.reset_circuit_breakers()
     return {
@@ -653,7 +653,7 @@ async def get_knowledge_base_stats():
     Knowledge base statistics endpoint.
     Returns RAG query stats, hit rate, and total documents stored.
     """
-    from knowledge_base import get_knowledge_base
+    from service.webhook.knowledge_base import get_knowledge_base
     kb = get_knowledge_base()
     return kb.get_stats()
 
@@ -663,7 +663,7 @@ async def check_knowledge_base_health():
     """
     Check knowledge base health (ChromaDB connection).
     """
-    from knowledge_base import get_knowledge_base
+    from service.webhook.knowledge_base import get_knowledge_base
     kb = get_knowledge_base()
     healthy = kb.health_check()
     
@@ -679,7 +679,7 @@ async def clear_knowledge_base():
     Clear all documents from knowledge base (for testing/debugging).
     WARNING: This will delete all stored remediation history!
     """
-    from knowledge_base import get_knowledge_base
+    from service.webhook.knowledge_base import get_knowledge_base
     kb = get_knowledge_base()
     success = kb.clear_collection()
     
@@ -814,7 +814,7 @@ async def run_remediation_workflow(alert_payload: dict, alert_type: str = "custo
     logger.info(f"[WORKFLOW {workflow_id}] Auto-remediation approved, escalation actions: {escalation_actions}")
     
     # Try Temporal first, fall back to direct execution
-    from temporal_client import start_remediation_workflow as start_temporal_workflow
+    from service.webhook.temporal_client import start_remediation_workflow as start_temporal_workflow
     temporal_result = await start_temporal_workflow(workflow_id, alert_payload, alert_type)
     
     if temporal_result.get("temporal_enabled") and temporal_result.get("status") == "accepted":

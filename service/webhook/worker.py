@@ -12,8 +12,8 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 # Import workflows and activities
-from temporal_workflows import RemediationWorkflow, HealthCheckWorkflow
-from temporal_activities import (
+from service.webhook.temporal_workflows import RemediationWorkflow, HealthCheckWorkflow
+from service.webhook.temporal_activities import (
     parse_alert_and_fetch_logs,
     analyze_issue_with_llm,
     validate_script_safety,
@@ -51,11 +51,11 @@ async def main():
     
     # Initialize dependencies
     logger.info("[WORKER] Initializing Kubernetes client...")
-    import k8s_client
+    import service.webhook.k8s_client as k8s_client
     k8s_client.init_k8s()
     
     logger.info("[WORKER] Initializing database connection...")
-    import database
+    import service.webhook.database as database
     await database.setup_audit_table()
     
     # Create worker with workflows and activities

@@ -9,7 +9,7 @@ Usage:
 
 import asyncio
 import logging
-from job_executor import get_job_executor
+from service.webhook.job_executor import get_job_executor
 
 # Configure logging
 logging.basicConfig(

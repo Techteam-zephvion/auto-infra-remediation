@@ -13,7 +13,7 @@ from temporalio.common import RetryPolicy
 
 # Import activities (will be defined in temporal_activities.py)
 with workflow.unsafe.imports_passed_through():
-    from temporal_activities import (
+    from service.webhook.temporal_activities import (
         parse_alert_and_fetch_logs,
         analyze_issue_with_llm,
         validate_script_safety,

@@ -6,7 +6,7 @@ import pytest
 import json
 import re
 from unittest.mock import Mock, patch, AsyncMock
-from graph import (
+from service.webhook.graph import (
     DENY_PATTERNS,
     _fix_remediation_plan_fields,
     _fix_safety_validation_fields,
@@ -181,7 +181,7 @@ class TestLangGraphPipeline:
         mock_llm.invoke = Mock(return_value=mock_response)
         mock_ollama.return_value = mock_llm
         
-        from graph import graph_solver
+        from service.webhook.graph import graph_solver
         
         state = {
             "alert_payload": {"test": "data"},
@@ -222,7 +222,7 @@ class TestRetryLogic:
         mock_llm.invoke = Mock(side_effect=responses)
         mock_ollama.return_value = mock_llm
         
-        from graph import graph_solver
+        from service.webhook.graph import graph_solver
         
         state = {
             "alert_payload": {"test": "data"},
@@ -245,7 +245,7 @@ class TestSafetyValidation:
     @pytest.mark.unit
     def test_programmatic_validation_blocks_dangerous_patterns(self):
         """Test that programmatic validation catches dangerous commands"""
-        from graph import graph_safety_validator
+        from service.webhook.graph import graph_safety_validator
         
         state = {
             "remediation_plan": {
@@ -277,7 +277,7 @@ class TestSafetyValidation:
         mock_llm.invoke = Mock(return_value=mock_response)
         mock_ollama.return_value = mock_llm
         
-        from graph import graph_safety_validator
+        from service.webhook.graph import graph_safety_validator
         
         state = {
             "remediation_plan": {
@@ -301,7 +301,7 @@ class TestEdgeCases:
     @pytest.mark.unit
     def test_empty_logs_handling(self):
         """Test handling of empty pod logs"""
-        from graph import graph_log_parser
+        from service.webhook.graph import graph_log_parser
         
         state = {
             "alert_payload": {
@@ -324,7 +324,7 @@ class TestEdgeCases:
     @pytest.mark.unit
     def test_missing_alert_fields(self):
         """Test handling of alerts with missing fields"""
-        from graph import graph_log_parser
+        from service.webhook.graph import graph_log_parser
         
         state = {
             "alert_payload": {

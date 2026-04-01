@@ -164,7 +164,7 @@ def execute_remediation_sandboxed(
     
     try:
         # Import JobExecutor (lazy import to avoid circular dependencies)
-        from job_executor import get_job_executor
+        from service.webhook.job_executor import get_job_executor
         
         executor = get_job_executor()
         

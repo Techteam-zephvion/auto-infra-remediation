@@ -29,7 +29,7 @@ def test_embeddings_initialization():
     print("TEST 1: Embeddings Generator Initialization")
     print("="*70)
     
-    from embeddings import get_embedding_generator
+    from service.webhook.embeddings import get_embedding_generator
     
     try:
         print("\nInitializing embedding generator...")
@@ -54,7 +54,7 @@ def test_embedding_generation():
     print("TEST 2: Embedding Generation")
     print("="*70)
     
-    from embeddings import get_embedding_generator
+    from service.webhook.embeddings import get_embedding_generator
     
     try:
         gen = get_embedding_generator()
@@ -96,7 +96,7 @@ def test_knowledge_base_initialization():
     print("TEST 3: Knowledge Base Initialization")
     print("="*70)
     
-    from knowledge_base import get_knowledge_base
+    from service.webhook.knowledge_base import get_knowledge_base
     
     try:
         print("\nInitializing knowledge base...")
@@ -130,8 +130,8 @@ def test_store_and_search():
     print("TEST 4: Store and Search Remediations")
     print("="*70)
     
-    from knowledge_base import get_knowledge_base
-    from embeddings import get_embedding_generator, create_remediation_text
+    from service.webhook.knowledge_base import get_knowledge_base
+    from service.webhook.embeddings import get_embedding_generator, create_remediation_text
     
     try:
         kb = get_knowledge_base()
@@ -200,7 +200,7 @@ def test_store_and_search():
         print("\n--- Searching for Similar Cases ---")
         
         # Query: CPU-related issue
-        from embeddings import create_query_text
+        from service.webhook.embeddings import create_query_text
         query_text = create_query_text(
             "cpu_spike",
             "CPU usage at 95% on nginx deployment, throttling requests"
@@ -243,7 +243,7 @@ def test_rag_context_formatting():
     print("TEST 5: RAG Context Formatting")
     print("="*70)
     
-    from knowledge_base import format_rag_context, RemediationCase
+    from service.webhook.knowledge_base import format_rag_context, RemediationCase
     
     try:
         # Create mock similar cases
@@ -295,7 +295,7 @@ def test_knowledge_base_stats():
     print("TEST 6: Knowledge Base Statistics")
     print("="*70)
     
-    from knowledge_base import get_knowledge_base
+    from service.webhook.knowledge_base import get_knowledge_base
     
     try:
         kb = get_knowledge_base()

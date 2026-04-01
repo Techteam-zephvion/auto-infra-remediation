@@ -13,9 +13,9 @@ from temporalio import activity
 from dotenv import load_dotenv
 
 # Import existing modules
-import k8s_client
-import database
-from graph import (
+import service.webhook.k8s_client as k8s_client
+import service.webhook.database as database
+from service.webhook.graph import (
     parse_and_fetch_logs as graph_parse_logs,
     solver_node as graph_solver,
     safety_validation_node as graph_safety_validator,
@@ -112,7 +112,7 @@ async def validate_script_safety(remediation_plan: Dict[str, Any]) -> Dict[str, 
     
     try:
         # Create a RemediationPlan-like object for the validator
-        from graph import RemediationPlan
+        from service.webhook.graph import RemediationPlan
         plan = RemediationPlan(
             analysis=remediation_plan["analysis"],
             script=remediation_plan["script"],
@@ -158,7 +158,7 @@ async def execute_remediation(exec_input: Dict[str, Any]) -> Dict[str, str]:
         workflow_id = exec_input["workflow_id"]
         
         # Use existing graph executor
-        from graph import RemediationPlan, SafetyValidation
+        from service.webhook.graph import RemediationPlan, SafetyValidation
         plan = RemediationPlan(analysis="", script=script, is_safe=True)
         validation = SafetyValidation(approved=True, reasoning="Approved by workflow")
         

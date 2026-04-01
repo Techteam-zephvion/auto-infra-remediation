@@ -149,6 +149,40 @@ llm_invocation_failures = _get_metric(
     ['node', 'error_type']
 )
 
+# RAG Knowledge Base metrics
+rag_queries = _get_metric(
+    Counter,
+    'rag_queries_total',
+    'Number of RAG knowledge base queries'
+)
+
+rag_hits = _get_metric(
+    Counter,
+    'rag_hits_total',
+    'Number of RAG queries that returned results',
+    ['alert_type']
+)
+
+rag_misses = _get_metric(
+    Counter,
+    'rag_misses_total',
+    'Number of RAG queries with no results',
+    ['alert_type']
+)
+
+rag_cases_retrieved = _get_metric(
+    Histogram,
+    'rag_cases_retrieved',
+    'Distribution of number of similar cases retrieved',
+    buckets=[0, 1, 2, 3, 5, 10]
+)
+
+rag_errors = _get_metric(
+    Counter,
+    'rag_errors_total',
+    'Number of RAG knowledge base errors'
+)
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -611,6 +645,48 @@ async def reset_circuit_breakers():
         "status": "success",
         "message": "All circuit breakers reset"
     }
+
+
+@app.get("/kb/stats")
+async def get_knowledge_base_stats():
+    """
+    Knowledge base statistics endpoint.
+    Returns RAG query stats, hit rate, and total documents stored.
+    """
+    from knowledge_base import get_knowledge_base
+    kb = get_knowledge_base()
+    return kb.get_stats()
+
+
+@app.get("/kb/health")
+async def check_knowledge_base_health():
+    """
+    Check knowledge base health (ChromaDB connection).
+    """
+    from knowledge_base import get_knowledge_base
+    kb = get_knowledge_base()
+    healthy = kb.health_check()
+    
+    if healthy:
+        return {"status": "healthy", "chromadb": "connected"}
+    else:
+        return {"status": "unhealthy", "chromadb": "disconnected"}
+
+
+@app.delete("/kb/clear")
+async def clear_knowledge_base():
+    """
+    Clear all documents from knowledge base (for testing/debugging).
+    WARNING: This will delete all stored remediation history!
+    """
+    from knowledge_base import get_knowledge_base
+    kb = get_knowledge_base()
+    success = kb.clear_collection()
+    
+    if success:
+        return {"status": "success", "message": "Knowledge base cleared"}
+    else:
+        return {"status": "failed", "message": "Failed to clear knowledge base"}
 
 
 @app.get("/remediations")

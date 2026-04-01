@@ -17,6 +17,8 @@ from k8s_client import get_pod_logs, get_pods_with_labels, execute_remediation, 
 from tracing import get_tracer
 from cache import get_llm_cache
 from llm_router import get_llm_router
+from knowledge_base import get_knowledge_base, format_rag_context
+from embeddings import get_embedding_generator, create_query_text
 
 load_dotenv()
 
@@ -230,10 +232,46 @@ def solver_node(state: GraphState) -> GraphState:
                 logger.info(f"[SUCCESS] [NODE] Solver Engine completed (cached) in {node_duration:.2f} seconds")
                 return {"remediation_plan": plan}
             
-            # Cache miss - call LLM
+            # Cache miss - call LLM with RAG enhancement
             span.set_attribute("cache.hit", False)
             logger.info(f"[AI] Initializing LLM Router with multi-model fallback...")
-            # Use LLMRouter with fallback chain: qwen2.5:3b → llama3.1:8b → GPT-4
+            
+            # ─── RAG: Search Knowledge Base for Similar Cases ───────────────────
+            rag_context = ""
+            try:
+                logger.info("[RAG] Searching knowledge base for similar historical cases...")
+                kb = get_knowledge_base()
+                embedding_gen = get_embedding_generator()
+                
+                # Create query text from current alert
+                query_text = create_query_text(alert_type, logs)
+                
+                # Generate embedding for query
+                query_embedding = embedding_gen.generate_embedding(query_text)
+                
+                # Search for similar cases
+                similar_cases = kb.search_similar(
+                    query_embedding=query_embedding,
+                    alert_type=alert_type,
+                    top_k=3,
+                    success_only=True
+                )
+                
+                if similar_cases:
+                    rag_context = format_rag_context(similar_cases, max_cases=3)
+                    span.set_attribute("rag.cases_found", len(similar_cases))
+                    logger.info(f"[RAG] ✅ Found {len(similar_cases)} similar cases for context enhancement")
+                else:
+                    rag_context = "No similar historical cases found in knowledge base."
+                    span.set_attribute("rag.cases_found", 0)
+                    logger.info("[RAG] No similar cases found")
+                    
+            except Exception as e:
+                logger.warning(f"[RAG] Failed to search knowledge base: {e}")
+                rag_context = "Knowledge base unavailable."
+                span.set_attribute("rag.error", str(e))
+            
+            # ─── LLM Invocation with RAG Context ─────────────────────────────────
             llm = get_llm_router()
 
             prompt = f"""
@@ -242,6 +280,8 @@ def solver_node(state: GraphState) -> GraphState:
 
         Here are the recent logs from the affected pod:
         {logs[:2000]}
+
+        {rag_context}
 
         Analyze the issue and propose a safe remediation script.
         Do NOT delete namespaces or entire deployments unless absolutely necessary.

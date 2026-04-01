@@ -102,6 +102,46 @@ llm_cache_errors = _get_metric(
     'Number of LLM cache errors'
 )
 
+# LLM Router metrics
+llm_router_requests = _get_metric(
+    Counter,
+    'llm_router_requests_total',
+    'Number of LLM router requests by model tier',
+    ['model_tier']
+)
+
+llm_router_failures = _get_metric(
+    Counter,
+    'llm_router_failures_total',
+    'Number of LLM router failures by model tier',
+    ['model_tier']
+)
+
+llm_router_fallbacks = _get_metric(
+    Counter,
+    'llm_router_fallbacks_total',
+    'Number of fallback events (model failed, trying next)'
+)
+
+llm_router_circuit_breaker_trips = _get_metric(
+    Counter,
+    'llm_router_circuit_breaker_trips_total',
+    'Number of circuit breaker trips'
+)
+
+llm_router_cost_usd = _get_metric(
+    Counter,
+    'llm_router_cost_usd_total',
+    'Total cost of LLM invocations in USD'
+)
+
+llm_router_latency = _get_metric(
+    Histogram,
+    'llm_router_latency_seconds',
+    'LLM invocation latency distribution',
+    buckets=[0.5, 1, 2, 5, 10, 20, 30, 60]
+)
+
 llm_invocation_failures = _get_metric(
     Counter,
     'llm_invocation_failures_total',
@@ -544,6 +584,32 @@ async def invalidate_cache(pattern: str = None):
         "status": "success",
         "deleted_keys": deleted,
         "pattern": pattern or "llm:response:*"
+    }
+
+
+@app.get("/llm/router/stats")
+async def get_llm_router_stats():
+    """
+    LLM router statistics endpoint.
+    Returns model usage, fallback rates, cost tracking, and circuit breaker status.
+    """
+    from llm_router import get_llm_router
+    llm_router = get_llm_router()
+    return llm_router.get_metrics()
+
+
+@app.post("/llm/router/reset_circuits")
+async def reset_circuit_breakers():
+    """
+    Force reset all circuit breakers (for debugging/testing).
+    Use with caution - this bypasses the circuit breaker failure protection.
+    """
+    from llm_router import get_llm_router
+    llm_router = get_llm_router()
+    llm_router.reset_circuit_breakers()
+    return {
+        "status": "success",
+        "message": "All circuit breakers reset"
     }
 
 

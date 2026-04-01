@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 from typing import TypedDict, List
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from opentelemetry import trace
@@ -17,6 +16,7 @@ from opentelemetry import trace
 from k8s_client import get_pod_logs, get_pods_with_labels, execute_remediation, execute_remediation_sandboxed
 from tracing import get_tracer
 from cache import get_llm_cache
+from llm_router import get_llm_router
 
 load_dotenv()
 
@@ -232,15 +232,9 @@ def solver_node(state: GraphState) -> GraphState:
             
             # Cache miss - call LLM
             span.set_attribute("cache.hit", False)
-            logger.info(f"[AI] Initializing Ollama model: {OLLAMA_MODEL}...")
-            # Don't use .with_structured_output() to avoid premature Pydantic validation
-            llm = ChatOllama(
-                model=OLLAMA_MODEL,
-                base_url=OLLAMA_BASE_URL,
-                temperature=0,
-                timeout=OLLAMA_TIMEOUT,
-                format="json"
-            )
+            logger.info(f"[AI] Initializing LLM Router with multi-model fallback...")
+            # Use LLMRouter with fallback chain: qwen2.5:3b → llama3.1:8b → GPT-4
+            llm = get_llm_router()
 
             prompt = f"""
         You are an expert Kubernetes SRE. An alert has fired:
@@ -365,14 +359,8 @@ def safety_validation_node(state: GraphState) -> GraphState:
             logger.info("[SECURITY] Pre-validation passed, proceeding to LLM validation...")
             span.set_attribute("validation.pre_check_passed", True)
 
-            # Don't use .with_structured_output() to avoid premature Pydantic validation
-            llm = ChatOllama(
-                model=OLLAMA_MODEL,
-                base_url=OLLAMA_BASE_URL,
-                temperature=0,
-                timeout=OLLAMA_TIMEOUT,
-                format="json"
-            )
+            # Use LLMRouter with fallback chain: qwen2.5:3b → llama3.1:8b → GPT-4
+            llm = get_llm_router()
             deny_list = ["rm -rf", "kubectl delete namespace", "kubectl delete pod --all", "halt", "reboot"]
 
             prompt = f"""

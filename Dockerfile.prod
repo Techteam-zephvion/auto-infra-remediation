@@ -17,16 +17,15 @@ WORKDIR /app
 COPY requirements.prod.txt .
 RUN pip install --no-cache-dir -r requirements.prod.txt
 
-# Copy application code
-COPY service/webhook/ ./
+# Copy full project (imports use service.webhook.* path hierarchy)
+COPY . .
+
+# Set PYTHONPATH so "from service.webhook.X import Y" resolves
+ENV PYTHONPATH=/app
 
 # Create necessary directories
 RUN mkdir -p /app/logs && \
     chown -R autoremediation:autoremediation /app
-
-# Copy production scripts
-COPY docker/start-prod.sh ./start-prod.sh
-RUN chmod +x ./start-prod.sh
 
 # Switch to non-root user
 USER autoremediation
@@ -38,5 +37,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Expose port
 EXPOSE 8001
 
-# Start both API and worker
-CMD ["./start-prod.sh"]
+# Default: run the API. Worker overrides this CMD in docker-compose.
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8001", "--app-dir", "/app/service/webhook"]

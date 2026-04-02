@@ -51,8 +51,11 @@ async def main():
     
     # Initialize dependencies
     logger.info("[WORKER] Initializing Kubernetes client...")
-    import service.webhook.k8s_client as k8s_client
-    k8s_client.init_k8s()
+    try:
+        import service.webhook.k8s_client as k8s_client
+        k8s_client.init_k8s()
+    except Exception as e:
+        logger.warning(f"[WORKER] Kubernetes client unavailable (no cluster config): {e}. Remediation will run in simulation mode.")
     
     logger.info("[WORKER] Initializing database connection...")
     import service.webhook.database as database

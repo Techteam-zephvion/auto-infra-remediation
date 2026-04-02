@@ -20,9 +20,16 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from langchain_ollama import ChatOllama
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.language_models import BaseChatModel
+
+# Conditional imports for optional providers
+try:
+    from langchain_openai import ChatOpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    ChatOpenAI = None
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +182,11 @@ class LLMRouter:
             elif config.provider == "openai":
                 if not self.openai_api_key:
                     logger.warning(f"[LLM ROUTER] Cannot initialize {config.name}: OPENAI_API_KEY missing")
+                    return None
+                
+                # Check if OpenAI is available
+                if not OPENAI_AVAILABLE or not ChatOpenAI:
+                    logger.warning(f"[LLM ROUTER] OpenAI provider not available, skipping {config.name}")
                     return None
                 
                 # Set API key as environment variable for LangChain
@@ -458,13 +470,15 @@ _llm_router_instance: Optional[LLMRouter] = None
 def get_llm_router() -> LLMRouter:
     """
     Get singleton LLM router instance.
-    
+
     Returns:
         Global LLMRouter instance
     """
     global _llm_router_instance
-    
+
     if _llm_router_instance is None:
-        _llm_router_instance = LLMRouter()
-    
+        _llm_router_instance = LLMRouter(
+            ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        )
+
     return _llm_router_instance
